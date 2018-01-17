@@ -1,1 +1,1 @@
-#define VERSION "v0.4.5-9-gce638e16fc-dirty" 
+#define VERSION "Android 5f2038cc6372847c6d8bd79027dad997fcd4ea94" 
