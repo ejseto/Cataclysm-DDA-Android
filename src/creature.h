@@ -2,27 +2,31 @@
 #ifndef CREATURE_H
 #define CREATURE_H
 
-#include "pldata.h"
-#include "json.h"
-#include "effect.h"
+#include "copyable_unique_ptr.h"
 #include "bodypart.h"
 #include "output.h"
 #include "string_id.h"
 #include "cursesdef.h" // WINDOW
+#include "string_formatter.h"
 
-#include <stdlib.h>
 #include <string>
 #include <unordered_map>
+#include <climits>
 
+class effect;
+class effects_map;
 class field;
 class field_entry;
 class game;
 class JsonObject;
 class JsonOut;
+struct tripoint;
+struct point;
 class material_type;
 enum damage_type : int;
 enum field_id : int;
 enum m_flag : int;
+enum hp_part : int;
 struct damage_instance;
 struct damage_unit;
 struct dealt_damage_instance;
@@ -30,9 +34,20 @@ struct dealt_projectile_attack;
 struct pathfinding_settings;
 struct projectile;
 struct trap;
-
+class effect_type;
+using efftype_id = string_id<effect_type>;
 using material_id = string_id<material_type>;
+struct mutation_branch;
 using trait_id = string_id<mutation_branch>;
+class ma_technique;
+using matec_id = string_id<ma_technique>;
+namespace units
+{
+template<typename V, typename U>
+class quantity;
+class mass_in_gram_tag;
+using mass = quantity<int, mass_in_gram_tag>;
+}
 
 enum m_size : int {
     MS_TINY = 0,    // Squirrel
@@ -300,9 +315,6 @@ class Creature
         /** Processes move stopping effects. Returns false if movement is stopped. */
         virtual bool move_effects(bool attacking) = 0;
 
-        /** Handles effect application effects. */
-        virtual void add_eff_effects(effect e, bool reduced);
-
         /** Adds or modifies an effect. If intensity is given it will set the effect intensity
             to the given value, or as close as max_intensity values permit. */
         virtual void add_effect( const efftype_id &eff_id, int dur, body_part bp = num_bp, bool permanent = false,
@@ -384,8 +396,10 @@ class Creature
 
         virtual int get_speed() const;
         virtual m_size get_size() const = 0;
-        virtual int get_hp( hp_part bp = num_hp_parts ) const = 0;
-        virtual int get_hp_max( hp_part bp = num_hp_parts ) const = 0;
+        virtual int get_hp( hp_part bp ) const = 0;
+        virtual int get_hp() const = 0;
+        virtual int get_hp_max( hp_part bp ) const = 0;
+        virtual int get_hp_max() const = 0;
         virtual int hp_percentage() const = 0;
         virtual bool made_of( const material_id &m ) const = 0;
         virtual field_id bloodType () const = 0;
@@ -461,8 +475,8 @@ class Creature
         virtual void set_grab_resist(int ngrabres);
         virtual void set_throw_resist(int nthrowres);
 
-        virtual int weight_capacity() const;
-        virtual int get_weight() const;
+        virtual units::mass weight_capacity() const;
+        virtual units::mass get_weight() const;
 
         /** Returns settings for pathfinding. */
         virtual const pathfinding_settings &get_pathfinding_settings() const = 0;
@@ -488,16 +502,55 @@ class Creature
         virtual int print_info(WINDOW *w, int vStart, int vLines, int column) const = 0;
 
         // Message related stuff
-        virtual void add_msg_if_player(const char *, ...) const PRINTF_LIKE( 2, 3 ) {};
-        virtual void add_msg_if_player(game_message_type, const char *, ...) const  PRINTF_LIKE( 3, 4 ) {};
-        virtual void add_msg_if_npc(const char *, ...) const  PRINTF_LIKE( 2, 3 ) {};
-        virtual void add_msg_if_npc(game_message_type, const char *, ...) const PRINTF_LIKE( 3, 4 ) {};
-        virtual void add_msg_player_or_npc(const char *, const char *, ...) const PRINTF_LIKE( 3, 4 ) {};
-        virtual void add_msg_player_or_npc(game_message_type, const char *, const char *, ...) const PRINTF_LIKE( 4, 5 ) {};
-        virtual void add_msg_player_or_say( const char *, const char *, ... ) const PRINTF_LIKE( 3, 4 ) {};
-        virtual void add_msg_player_or_say( game_message_type, const char *, const char *, ... ) const PRINTF_LIKE( 4, 5 ) {};
+        template<typename ...Args>
+        void add_msg_if_player( const char *const msg, Args &&... args ) const {
+            return add_msg_if_player( string_format( msg, std::forward<Args>( args )... ) );
+        }
+        virtual void add_msg_if_player( const std::string &/*msg*/ ) const {}
+        template<typename ...Args>
+        void add_msg_if_player( const game_message_type type, const char *const msg, Args &&... args ) const {
+            return add_msg_if_player( type, string_format( msg, std::forward<Args>( args )... ) );
+        }
+        virtual void add_msg_if_player( game_message_type /*type*/, const std::string &/*msg*/ ) const {}
 
-        virtual void add_memorial_log(const char *, const char *, ...) PRINTF_LIKE( 3, 4 ) {};
+        template<typename ...Args>
+        void add_msg_if_npc( const char *const msg, Args &&... args ) const {
+            return add_msg_if_npc( string_format( msg, std::forward<Args>( args )... ) );
+        }
+        virtual void add_msg_if_npc( const std::string &/*msg*/ ) const {}
+        template<typename ...Args>
+        void add_msg_if_npc( const game_message_type type, const char *const msg, Args &&... args ) const {
+            return add_msg_if_npc( type, string_format( msg, std::forward<Args>( args )... ) );
+        }
+        virtual void add_msg_if_npc( game_message_type /*type*/, const std::string &/*msg*/ ) const {}
+
+        template<typename ...Args>
+        void add_msg_player_or_npc( const char *const player_msg, const char *const npc_msg, Args &&... args ) const {
+            return add_msg_player_or_npc( string_format( player_msg, std::forward<Args>( args )... ), string_format( npc_msg, std::forward<Args>( args )... ) );
+        }
+        virtual void add_msg_player_or_npc( const std::string &/*player_msg*/, const std::string &/*npc_msg*/ ) const {}
+        template<typename ...Args>
+        void add_msg_player_or_npc( const game_message_type type, const char *const player_msg, const char *const npc_msg, Args &&... args ) const {
+            return add_msg_player_or_npc( type, string_format( player_msg, std::forward<Args>( args )... ), string_format( npc_msg, std::forward<Args>( args )... ) );
+        }
+        virtual void add_msg_player_or_npc( game_message_type /*type*/, const std::string &/*player_msg*/, const std::string &/*npc_msg*/ ) const {}
+
+        template<typename ...Args>
+        void add_msg_player_or_say( const char *const player_msg, const char *const npc_speech, Args &&... args ) const {
+            return add_msg_player_or_say( string_format( player_msg, std::forward<Args>( args )... ), string_format( npc_speech, std::forward<Args>( args )... ) );
+        }
+        virtual void add_msg_player_or_say( const std::string &/*player_msg*/, const std::string &/*npc_speech*/ ) const {}
+        template<typename ...Args>
+        void add_msg_player_or_say( const game_message_type type, const char *const player_msg, const char *const npc_speech, Args &&... args ) const {
+            return add_msg_player_or_say( type, string_format( player_msg, std::forward<Args>( args )... ), string_format( npc_speech, std::forward<Args>( args )... ) );
+        }
+        virtual void add_msg_player_or_say( game_message_type /*type*/, const std::string &/*player_msg*/, const std::string &/*npc_speech*/ ) const {}
+
+        template<typename ...Args>
+        void add_memorial_log( const char *const male_msg, const char *const female_msg, Args &&... args ) {
+            return add_memorial_log( string_format( male_msg, std::forward<Args>( args )... ), string_format( female_msg, std::forward<Args>( args )... ) );
+        }
+        virtual void add_memorial_log( const std::string &/*male_msg*/, const std::string &/*female_msg*/ ) {}
 
         virtual std::string extended_description() const = 0;
 
@@ -510,8 +563,13 @@ class Creature
         Creature *killer; // whoever killed us. this should be NULL unless we are dead
         void set_killer( Creature *killer );
 
-        // Storing body_part as an int to make things easier for hash and JSON
-        std::unordered_map<efftype_id, std::unordered_map<body_part, effect, std::hash<int>>> effects;
+        /**
+         * Processes one effect on the Creature.
+         * Must not remove the effect, but can set it up for removal.
+         */
+        virtual void process_one_effect( effect &e, bool is_new ) = 0;
+
+        copyable_unique_ptr<effects_map> effects;
         // Miscellaneous key/value pairs.
         std::unordered_map<std::string, std::string> values;
 

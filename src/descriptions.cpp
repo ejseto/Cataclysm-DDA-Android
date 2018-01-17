@@ -6,6 +6,7 @@
 #include "monster.h"
 #include "map.h"
 #include "mapdata.h"
+#include "string_formatter.h"
 #include "input.h"
 #include "ui.h"
 #include "harvest.h"
@@ -20,7 +21,7 @@ enum class description_target : int {
 
 const Creature *seen_critter( const game &g, const tripoint &p )
 {
-    const Creature *critter = g.critter_at( p );
+    const Creature *critter = g.critter_at( p, true );
     if( critter != nullptr && g.u.sees( *critter ) ) {
         return critter;
     }
@@ -36,8 +37,8 @@ void game::extended_description( const tripoint &p )
     const int bottom = TERMY;
     const int width = right - left;
     const int height = bottom - top;
-    WINDOW *w_head = newwin( top, TERMX, 0, 0 );
-    WINDOW *w_main = newwin( height, width, top, left );
+    catacurses::window w_head = catacurses::newwin( top, TERMX, 0, 0 );
+    catacurses::window w_main = catacurses::newwin( height, width, top, left );
     // @todo De-hardcode
     std::string header_message = _( "\
 c to describe creatures, f to describe furniture, t to describe terrain, esc/enter to close." );
@@ -88,8 +89,13 @@ c to describe creatures, f to describe furniture, t to describe terrain, esc/ent
                 break;
         }
 
+        std::string signage = m.get_signage( p );
+        if( signage.size() > 0 ) {
+            desc += string_format( _( "\nSign: %s" ), signage.c_str() );
+        }
+
         werase( w_main );
-        fold_and_print_from( w_main, 0, 0, width, 0, c_ltgray, desc );
+        fold_and_print_from( w_main, 0, 0, width, 0, c_light_gray, desc );
         wrefresh( w_main );
         // TODO: use input context
         ch = inp_mngr.get_input_event().get_first_input();
@@ -118,7 +124,7 @@ c to describe creatures, f to describe furniture, t to describe terrain, esc/ent
 std::string map_data_common_t::extended_description() const
 {
     std::stringstream ss;
-    ss << "<header>" << string_format( _( "That is a %s." ), name.c_str() ) << "</header>" << std::endl;
+    ss << "<header>" << string_format( _( "That is a %s." ), name().c_str() ) << "</header>" << '\n';
     ss << description << std::endl;
     bool has_any_harvest = std::any_of( harvest_by_season.begin(), harvest_by_season.end(),
     []( const harvest_id & hv ) {

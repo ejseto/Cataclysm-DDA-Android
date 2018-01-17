@@ -216,14 +216,14 @@ player_morale::player_morale() :
     const auto update_masochist   = std::bind( &player_morale::update_masochist_bonus, _1 );
 
     mutations[trait_id( "OPTIMISTIC" )]    = mutation_data(
-                                     std::bind( set_optimist, _1, 4 ),
-                                     std::bind( set_optimist, _1, 0 ) );
+                std::bind( set_optimist, _1, 4 ),
+                std::bind( set_optimist, _1, 0 ) );
     mutations[trait_id( "BADTEMPER" )]     = mutation_data(
-                                     std::bind( set_badtemper, _1, -4 ),
-                                     std::bind( set_badtemper, _1, 0 ) );
+                std::bind( set_badtemper, _1, -4 ),
+                std::bind( set_badtemper, _1, 0 ) );
     mutations[trait_id( "STYLISH" )]       = mutation_data(
-                                     std::bind( set_stylish, _1, true ),
-                                     std::bind( set_stylish, _1, false ) );
+                std::bind( set_stylish, _1, true ),
+                std::bind( set_stylish, _1, false ) );
     mutations[trait_id( "FLOWERS" )]       = mutation_data( update_constrained );
     mutations[trait_id( "ROOTS1" )]         = mutation_data( update_constrained );
     mutations[trait_id( "ROOTS2" )]        = mutation_data( update_constrained );
@@ -370,7 +370,7 @@ void player_morale::display( double focus_gain )
     const int win_x = ( TERMX - win_w ) / 2;
     const int win_y = ( TERMY - win_h ) / 2;
 
-    WINDOW *w = newwin( win_h, win_w, win_y, win_x );
+    catacurses::window w = catacurses::newwin( win_h, win_w, win_y, win_x );
 
     draw_border( w );
 
@@ -392,7 +392,7 @@ void player_morale::display( double focus_gain )
             color = ( value > 0.0 ) ? c_green : c_red;
             mvwprintz( w, y, getmaxx( w ) - 8, color, "%+6.*f", decimals, value );
         } else {
-            color = c_dkgray;
+            color = c_dark_gray;
             mvwprintz( w, y, getmaxx( w ) - 3, color, "-" );
         }
         return fold_and_print_from( w, y, 2, getmaxx( w ) - 9, 0, color, label );
@@ -402,8 +402,8 @@ void player_morale::display( double focus_gain )
         const char *source_column = _( "Source" );
         const char *value_column = _( "Value" );
 
-        mvwprintz( w, 3, 2, c_ltgray, source_column );
-        mvwprintz( w, 3, win_w - utf8_width( value_column ) - 2, c_ltgray, value_column );
+        mvwprintz( w, 3, 2, c_light_gray, source_column );
+        mvwprintz( w, 3, win_w - utf8_width( value_column ) - 2, c_light_gray, value_column );
 
         const morale_mult mult = get_temper_mult();
 
@@ -418,7 +418,7 @@ void player_morale::display( double focus_gain )
             }
         }
     } else {
-        fold_and_print_from( w, 3, 2, win_w - 4, 0, c_dkgray, _( "Nothing affects your morale" ) );
+        fold_and_print_from( w, 3, 2, win_w - 4, 0, c_dark_gray, _( "Nothing affects your morale" ) );
     }
 
     print_line( win_h - 3, morale_gain_caption, get_level() );
@@ -639,7 +639,8 @@ void player_morale::update_stylish_bonus()
 void player_morale::update_masochist_bonus()
 {
     const bool amateur_masochist = has_mutation( trait_id( "MASOCHIST" ) );
-    const bool advanced_masochist = has_mutation( trait_id( "MASOCHIST_MED" ) ) || has_mutation( trait_id( "CENOBITE" ) );
+    const bool advanced_masochist = has_mutation( trait_id( "MASOCHIST_MED" ) ) ||
+                                    has_mutation( trait_id( "CENOBITE" ) );
     const bool any_masochist = amateur_masochist || advanced_masochist;
 
     int bonus = 0;
@@ -697,7 +698,8 @@ void player_morale::update_constrained_penalty()
     if( has_mutation( trait_id( "FLOWERS" ) ) ) {
         pen += bp_pen( bp_head, 10 );
     }
-    if( has_mutation( trait_id( "ROOTS1" ) ) || has_mutation( trait_id( "ROOTS2" ) ) || has_mutation( trait_id( "ROOTS3" ) ) ) {
+    if( has_mutation( trait_id( "ROOTS1" ) ) || has_mutation( trait_id( "ROOTS2" ) ) ||
+        has_mutation( trait_id( "ROOTS3" ) ) ) {
         pen += bp_pen( bp_foot_l, 5 );
         pen += bp_pen( bp_foot_r, 5 );
     }

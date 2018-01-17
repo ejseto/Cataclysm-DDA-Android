@@ -320,7 +320,7 @@
     "id": "wooled",
     "type": "json_flag",
     "context": [ "ARMOR", "TOOL_ARMOR" ],
-    "info": " This clothing has a wool lining sewn into it to <good>increase</good> its overall <info>warmth</info>.",
+    "info": "This clothing has a wool lining sewn into it to <good>increase</good> its overall <info>warmth</info>.",
     "pseudo": true
   },
   {
@@ -328,6 +328,6 @@
     "type": "json_flag",
     "context": [ "GENERIC", "TOOL" ],
     "description": "Allows wielding with unarmed fighting styles and trains unarmed when used.",
-    "info": "This weapon <good>can be used with</good> <info>unarmed fighting styles</info>." 
+    "info": "This weapon <good>can be used with</good> <info>unarmed fighting styles</info>."
   }
 ]

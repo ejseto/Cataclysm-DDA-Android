@@ -2,7 +2,6 @@
 #ifndef RECIPE_H
 #define RECIPE_H
 
-#include "item.h"
 #include "requirements.h"
 
 #include <map>
@@ -12,7 +11,7 @@
 
 class recipe_dictionary;
 class Skill;
-
+class item;
 using skill_id = string_id<Skill>;
 using itype_id = std::string; // From itype.h
 using requirement_id = string_id<requirement_data>;
@@ -61,6 +60,7 @@ class recipe
 
         std::map<skill_id, int> autolearn_requirements; // Skill levels required to autolearn
         std::map<skill_id, int> learn_by_disassembly; // Skill levels required to learn by disassembly
+        std::map<itype_id, int> booksets; // Books containing this recipe, and the skill level required
 
         //Create a string list to describe the skill requirements fir this recipe
         // Format: skill_name(amount), skill_name(amount)
@@ -116,7 +116,6 @@ class recipe
         /** Combined requirements cached when recipe finalized */
         requirement_data requirements_;
 
-        std::map<itype_id, int> booksets;
         std::set<std::string> flags;
 
         /** If set (zero or positive) set charges of output result for items counted by charges */

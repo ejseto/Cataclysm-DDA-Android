@@ -7,20 +7,19 @@
 #include <set>
 #include <string>
 #include "enums.h"
-#include "json.h"
 #include "string_id.h"
 #include "monster.h"
 
 // from overmap.h
 class overmap;
-
+class JsonObject;
+class JsonIn;
+class JsonOut;
 struct MonsterGroup;
 using mongroup_id = string_id<MonsterGroup>;
-extern template const string_id<MonsterGroup> string_id<MonsterGroup>::NULL_ID;
 
 struct mtype;
 using mtype_id = string_id<mtype>;
-extern template const string_id<mtype> string_id<mtype>::NULL_ID;
 
 struct MonsterGroupEntry;
 typedef std::vector<MonsterGroupEntry> FreqDef;
@@ -61,7 +60,7 @@ struct MonsterGroupResult {
     mtype_id name;
     int pack_size;
 
-    MonsterGroupResult() : name( mtype_id::NULL_ID ), pack_size( 0 ) {
+    MonsterGroupResult() : name( mtype_id::NULL_ID() ), pack_size( 0 ) {
     }
 
     MonsterGroupResult( const mtype_id &id, int new_pack_size )
@@ -82,7 +81,7 @@ struct MonsterGroup {
     bool is_safe; /// Used for @ref mongroup::is_safe()
 };
 
-struct mongroup : public JsonSerializer, public JsonDeserializer {
+struct mongroup {
     mongroup_id type;
     // Note: position is not saved as such in the json
     // Instead, a vector of positions is saved for
@@ -158,12 +157,9 @@ struct mongroup : public JsonSerializer, public JsonDeserializer {
     void io( Archive & );
     using archive_type_tag = io::object_archive_tag;
 
-    using JsonDeserializer::deserialize;
-    void deserialize( JsonIn &jsin ) override;
+    void deserialize( JsonIn &jsin );
     void deserialize_legacy( JsonIn &jsin );
-
-    using JsonSerializer::serialize;
-    void serialize( JsonOut &jsout ) const override;
+    void serialize( JsonOut &jsout ) const;
 };
 
 class MonsterGroupManager

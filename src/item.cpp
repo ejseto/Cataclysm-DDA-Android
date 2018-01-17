@@ -1,11 +1,15 @@
 #include "item.h"
 
 #include "flag.h"
+#include "string_formatter.h"
 #include "advanced_inv.h"
 #include "player.h"
+#include "enums.h"
 #include "damage.h"
+#include "dispersion.h"
 #include "output.h"
 #include "skill.h"
+#include "vitamin.h"
 #include "bionics.h"
 #include "game.h"
 #include "map.h"
@@ -15,6 +19,7 @@
 #include "material.h"
 #include "item_factory.h"
 #include "projectile.h"
+#include "effect.h" // for weed_msg
 #include "item_group.h"
 #include "options.h"
 #include "messages.h"
@@ -40,6 +45,8 @@
 #include "input.h"
 #include "fault.h"
 #include "vehicle_selector.h"
+#include "units.h"
+#include "ret_val.h"
 
 #include <cmath> // floor
 #include <sstream>
@@ -49,6 +56,7 @@
 #include <array>
 #include <tuple>
 #include <iterator>
+#include <cassert>
 
 static const std::string GUN_MODE_VAR_NAME( "item::mode" );
 
@@ -71,6 +79,9 @@ const efftype_id effect_cig( "cig" );
 const efftype_id effect_shakes( "shakes" );
 const efftype_id effect_sleep( "sleep" );
 const efftype_id effect_weed_high( "weed_high" );
+
+const material_id mat_leather( "leather" );
+const material_id mat_kevlar( "kevlar" );
 
 std::string const& rad_badge_color(int const rad)
 {
@@ -106,15 +117,14 @@ static const itype *nullitem()
 
 const long item::INFINITE_CHARGES = std::numeric_limits<long>::max();
 
-item::item()
+item::item() : bday( 0 )
 {
     type = nullitem();
 }
 
-item::item( const itype *type, int turn, long qty ) : type( type )
+item::item( const itype *type, time_point turn, long qty ) : type( type ), bday( turn >= 0 ? turn : calendar::turn )
 {
-    bday = turn >= 0 ? turn : int( calendar::turn );
-    corpse = typeId() == "corpse" ? &mtype_id::NULL_ID.obj() : nullptr;
+    corpse = typeId() == "corpse" ? &mtype_id::NULL_ID().obj() : nullptr;
     item_counter = type->countdown_interval;
 
     if( qty >= 0 ) {
@@ -146,7 +156,7 @@ item::item( const itype *type, int turn, long qty ) : type( type )
 
     } else if( type->tool ) {
         if( ammo_remaining() && ammo_type() ) {
-            ammo_set( default_ammo( ammo_type() ), ammo_remaining() );
+            ammo_set( ammo_type()->default_ammotype(), ammo_remaining() );
         }
     }
 
@@ -159,28 +169,28 @@ item::item( const itype *type, int turn, long qty ) : type( type )
     }
 }
 
-item::item( const itype_id& id, int turn, long qty )
+item::item( const itype_id& id, time_point turn, long qty )
     : item( find_type( id ), turn, qty ) {}
 
-item::item( const itype *type, int turn, default_charges_tag )
+item::item( const itype *type, time_point turn, default_charges_tag )
     : item( type, turn, type->charges_default() ) {}
 
-item::item( const itype_id& id, int turn, default_charges_tag tag )
+item::item( const itype_id& id, time_point turn, default_charges_tag tag )
     : item( find_type( id ), turn, tag ) {}
 
-item::item( const itype *type, int turn, solitary_tag )
+item::item( const itype *type, time_point turn, solitary_tag )
     : item( type, turn, type->count_by_charges() ? 1 : -1 ) {}
 
-item::item( const itype_id& id, int turn, solitary_tag tag )
+item::item( const itype_id& id, time_point turn, solitary_tag tag )
     : item( find_type( id ), turn, tag ) {}
 
-item item::make_corpse( const mtype_id& mt, int turn, const std::string &name )
+item item::make_corpse( const mtype_id& mt, time_point turn, const std::string &name )
 {
     if( !mt.is_valid() ) {
         debugmsg( "tried to make a corpse with an invalid mtype id" );
     }
 
-    item result( "corpse", turn >= 0 ? turn : int( calendar::turn ) );
+    item result( "corpse", turn >= 0 ? turn : calendar::turn );
     result.corpse = &mt.obj();
 
     result.active = result.corpse->has_flag( MF_REVIVES );
@@ -193,11 +203,6 @@ item item::make_corpse( const mtype_id& mt, int turn, const std::string &name )
     result.corpse_name = name;
 
     return result;
-}
-
-item::item(JsonObject &jo)
-{
-    deserialize(jo);
 }
 
 item& item::convert( const itype_id& new_type )
@@ -304,7 +309,7 @@ item& item::ammo_set( const itype_id& ammo, long qty )
                 // as above call to magazine_default successful can infer minimum one option exists
                 auto iter = type->magazines.find( ammo_type() );
                 std::vector<itype_id> opts( iter->second.begin(), iter->second.end() );
-                std::sort( opts.begin(), opts.end(), [qty]( const itype_id &lhs, const itype_id &rhs ) {
+                std::sort( opts.begin(), opts.end(), []( const itype_id &lhs, const itype_id &rhs ) {
                     return find_type( lhs )->magazine->capacity < find_type( rhs )->magazine->capacity;
                 } );
                 mag = find_type( opts.back() );
@@ -465,7 +470,7 @@ item item::in_its_container() const
 item item::in_container( const itype_id &cont ) const
 {
     if( cont != "null" ) {
-        item ret( cont, bday );
+        item ret( cont, birthday() );
         ret.contents.push_back( *this );
         if( made_of( LIQUID ) && ret.is_container() ) {
             // Note: we can't use any of the normal normal container functions as they check the
@@ -682,7 +687,11 @@ std::string item::info( bool showtext ) const
     return info( showtext, dummy );
 }
 
-std::string item::info( bool showtext, std::vector<iteminfo> &info ) const
+std::string item::info( bool showtext, std::vector<iteminfo> &iteminfo ) const {
+    return info( showtext, iteminfo, 1 );
+}
+
+std::string item::info( bool showtext, std::vector<iteminfo> &info, int batch ) const
 {
     std::stringstream temp1, temp2;
     std::string space = "  ";
@@ -700,8 +709,8 @@ std::string item::info( bool showtext, std::vector<iteminfo> &info ) const
     if( !is_null() ) {
         info.push_back( iteminfo( "BASE", _( "Category: " ), "<header>" + get_category().name + "</header>",
                                   -999, true, "", false ) );
-        const int price_preapoc = price( false );
-        const int price_postapoc = price( true );
+        const int price_preapoc = price( false ) * batch;
+        const int price_postapoc = price( true ) * batch;
         info.push_back( iteminfo( "BASE", space + _( "Price: " ), "<num>",
                                   ( double )price_preapoc / 100, false, "$", true, true ) );
         if( price_preapoc != price_postapoc ) {
@@ -711,7 +720,7 @@ std::string item::info( bool showtext, std::vector<iteminfo> &info ) const
 
         int converted_volume_scale = 0;
         const double converted_volume = round_up( convert_volume( volume().value(),
-                                                                  &converted_volume_scale ), 2 );
+                                                                  &converted_volume_scale ) * batch, 2 );
         info.push_back( iteminfo( "BASE", _( "<bold>Volume</bold>: " ),
                                   string_format( "<num> %s", volume_units_abbr() ),
                                   converted_volume, converted_volume_scale == 0,
@@ -719,7 +728,7 @@ std::string item::info( bool showtext, std::vector<iteminfo> &info ) const
 
         info.push_back( iteminfo( "BASE", space + _( "Weight: " ),
                                   string_format( "<num> %s", weight_units() ),
-                                  convert_weight( weight() ), false, "", true, true ) );
+                                  convert_weight( weight() ) * batch, false, "", true, true ) );
 
         if( !type->rigid ) {
             info.emplace_back( "BASE", _( "<bold>Rigid</bold>: " ), _( "No (contents increase volume)" ) );
@@ -747,16 +756,6 @@ std::string item::info( bool showtext, std::vector<iteminfo> &info ) const
                                       type->m_to_hit, true, "" ) );
             info.push_back( iteminfo( "BASE", _( "Moves per attack: " ), "",
                                       attack_time(), true, "", true, true ) );
-
-            if( !conductive () ) {
-                info.push_back( iteminfo( "BASE", string_format( _( "* This weapon <good>does not conduct</good> electricity." ) ) ) );
-            }
-            else if( has_flag( "CONDUCTIVE" ) ) {
-                info.push_back( iteminfo( "BASE", string_format( _( "* This weapon effectively <bad>conducts</bad> electricity, as it has no guard." ) ) ) );
-            }
-            else {
-                info.push_back( iteminfo( "BASE", string_format( _( "* This weapon <bad>conducts</bad> electricity." ) ) ) );
-            }
         }
 
         insert_separation_line();
@@ -788,7 +787,7 @@ std::string item::info( bool showtext, std::vector<iteminfo> &info ) const
         if( !mat_types.empty() ) {
             const std::string material_list = enumerate_as_string( mat_types.begin(), mat_types.end(),
             []( const material_type *material ) {
-                return string_format( "<stat>%s</stat>", material->name().c_str() );
+                return string_format( "<stat>%s</stat>", _( material->name().c_str() ) );
             }, false );
             info.push_back( iteminfo( "BASE", string_format( _( "Material: %s" ), material_list.c_str() ) ) );
         }
@@ -796,15 +795,18 @@ std::string item::info( bool showtext, std::vector<iteminfo> &info ) const
             info.push_back( iteminfo( "BASE", string_format( _( "Contains: %s" ),
                                       get_var( "contained_name" ).c_str() ) ) );
         }
+        if( count_by_charges() && !is_food() ) {
+            info.push_back( iteminfo( "BASE", _( "Amount: " ), "<num>", charges * batch, true, "", true, false, true ) );
+        }
         if( debug == true ) {
             if( g != NULL ) {
                 info.push_back( iteminfo( "BASE", _( "age: " ), "",
-                                          ( int( calendar::turn ) - bday ) / ( 10 * 60 ), true, "", true, true ) );
+                                          to_hours<int>( age() ), true, "", true, true ) );
 
                 const item *food = is_food_container() ? &contents.front() : this;
                 if( food && food->goes_bad() ) {
                     info.push_back( iteminfo( "BASE", _( "bday rot: " ), "",
-                                              ( int( calendar::turn ) - food->bday ), true, "", true, true ) );
+                                              to_turns<int>( food->age() ), true, "", true, true ) );
                     info.push_back( iteminfo( "BASE", _( "temp rot: " ), "",
                                               ( int )food->rot, true, "", true, true ) );
                     info.push_back( iteminfo( "BASE", space + _( "max rot: " ), "",
@@ -826,19 +828,19 @@ std::string item::info( bool showtext, std::vector<iteminfo> &info ) const
         food_item = &contents.front();
     }
     if( food_item != nullptr ) {
-        if( g->u.nutrition_for( food_item->type ) != 0 || food_item->type->comestible->quench != 0 ) {
-            info.push_back( iteminfo( "FOOD", _( "<bold>Nutrition</bold>: " ), "", g->u.nutrition_for( food_item->type ),
+        if( g->u.nutrition_for( *food_item ) != 0 || food_item->type->comestible->quench != 0 ) {
+            info.push_back( iteminfo( "FOOD", _( "<bold>Nutrition</bold>: " ), "", g->u.nutrition_for( *food_item ),
                                       true, "", false, true ) );
             info.push_back( iteminfo( "FOOD", space + _( "Quench: " ), "", food_item->type->comestible->quench ) );
         }
 
-        if( food_item->type->comestible->fun ) {
-            info.push_back( iteminfo( "FOOD", _( "Enjoyability: " ), "", food_item->type->comestible->fun ) );
+        if( food_item->type->comestible->fun != 0 ) {
+            info.push_back( iteminfo( "FOOD", _( "Enjoyability: " ), "", g->u.fun_for( *food_item ).first ) );
         }
 
-        info.push_back( iteminfo( "FOOD", _( "Portions: " ), "", abs( int( food_item->charges ) ) ) );
+        info.push_back( iteminfo( "FOOD", _( "Portions: " ), "", abs( int( food_item->charges ) * batch ) ) );
         if( food_item->corpse != NULL && ( debug == true || ( g != NULL &&
-                                           ( g->u.has_bionic( "bio_scent_vision" ) || g->u.has_trait( trait_id( "CARNIVORE" ) ) ||
+                                           ( g->u.has_bionic( bionic_id( "bio_scent_vision" ) ) || g->u.has_trait( trait_id( "CARNIVORE" ) ) ||
                                              g->u.has_artifact_with( AEP_SUPER_CLAIRVOYANCE ) ) ) ) ) {
             info.push_back( iteminfo( "FOOD", _( "Smells like: " ) + food_item->corpse->nname() ) );
         }
@@ -881,7 +883,7 @@ std::string item::info( bool showtext, std::vector<iteminfo> &info ) const
                                string_format( _( "* This food is <neutral>perishable</neutral>, and takes <info>%s</info> to rot from full freshness, at room temperature." ),
                                               rot_time.c_str() ) );
             if( food_item->rotten() ) {
-                if( g->u.has_bionic( "bio_digestion" ) ) {
+                if( g->u.has_bionic( bionic_id( "bio_digestion" ) ) ) {
                     info.push_back( iteminfo( "DESCRIPTION",
                                               _( "This food has started to <neutral>rot</neutral>, but <info>your bionic digestion can tolerate it</info>." ) ) );
                 } else if( g->u.has_trait( trait_id( "SAPROVORE" ) ) ) {
@@ -898,7 +900,7 @@ std::string item::info( bool showtext, std::vector<iteminfo> &info ) const
     if( is_magazine() && !has_flag( "NO_RELOAD" ) ) {
         info.emplace_back( "MAGAZINE", _( "Capacity: " ),
                            string_format( ngettext( "<num> round of %s", "<num> rounds of %s", ammo_capacity() ),
-                                          ammo_name( ammo_type() ).c_str() ), ammo_capacity(), true );
+                                          ammo_type()->name().c_str() ), ammo_capacity(), true );
 
         info.emplace_back( "MAGAZINE", _( "Reload time: " ), _( "<num> per round" ),
                            type->magazine->reload_time, true, "", true, true );
@@ -913,7 +915,7 @@ std::string item::info( bool showtext, std::vector<iteminfo> &info ) const
             } else if( is_ammo() ) {
                 info.emplace_back( "AMMO", _( "Types: " ),
                                    enumerate_as_string( type->ammo->type.begin(), type->ammo->type.end(),
-                                                        []( const ammotype &e ) { return _( e->name().c_str() ); }, false ) );
+                                                        []( const ammotype &e ) { return e->name(); }, false ) );
             }
 
             const auto& ammo = *ammo_data()->ammo;
@@ -981,10 +983,10 @@ std::string item::info( bool showtext, std::vector<iteminfo> &info ) const
             if( mod->ammo_capacity() ) {
                 info.emplace_back( "GUN", _( "<bold>Capacity:</bold> " ),
                                    string_format( ngettext( "<num> round of %s", "<num> rounds of %s", mod->ammo_capacity() ),
-                                                  ammo_name( mod->ammo_type() ).c_str() ), mod->ammo_capacity(), true );
+                                                  mod->ammo_type()->name().c_str() ), mod->ammo_capacity(), true );
             }
         } else {
-            info.emplace_back( "GUN", _( "Type: " ), ammo_name( mod->ammo_type() ) );
+            info.emplace_back( "GUN", _( "Type: " ), mod->ammo_type()->name() );
             if( mod->magazine_current() ) {
                 info.emplace_back( "GUN", _( "Magazine: " ), string_format( "<stat>%s</stat>", mod->magazine_current()->tname().c_str() ) );
             }
@@ -1002,9 +1004,25 @@ std::string item::info( bool showtext, std::vector<iteminfo> &info ) const
 
         insert_separation_line();
 
-        int aim_mv = g->u.gun_engagement_moves( *mod );
-        if( aim_mv > 0 ) {
-            info.emplace_back( "GUN", _( "Maximum aiming time: " ), _( "<num> seconds" ), int( aim_mv / 16.67 ), true, "", true, true );
+        int max_gun_range = mod->gun_range( &g->u );
+        if( max_gun_range > 0 ) {
+            info.emplace_back( "GUN", space + _( "Maximum range: " ), "<num>", max_gun_range );
+        }
+
+        info.emplace_back( "GUN", _( "Base aim speed: " ), "<num>", g->u.aim_per_move( *mod, MAX_RECOIL ), true, "", true, true );
+        for( const aim_type type : g->u.get_aim_types( *mod ) ) {
+            // Nameless aim levels don't get an entry.
+            if( type.name.empty() ) {
+                continue;
+            }
+            info.emplace_back( "GUN", _( type.name.c_str() ) );
+            int max_dispersion = g->u.get_weapon_dispersion( *mod ).max();
+            int range = range_with_even_chance_of_good_hit( max_dispersion + type.threshold );
+            info.emplace_back( "GUN", _( "Even chance of good hit at range: " ),
+                               _( "<num>" ), range );
+            int aim_mv = g->u.gun_engagement_moves( *mod, type.threshold );
+            info.emplace_back( "GUN", _( "Time to reach aim level: " ), _( "<num> seconds" ),
+                               TICKS_TO_SECONDS( aim_mv ), false, "", true, true );
         }
 
         info.push_back( iteminfo( "GUN", _( "Damage: " ), "", mod->gun_damage( false ), true, "", false, false ) );
@@ -1085,7 +1103,7 @@ std::string item::info( bool showtext, std::vector<iteminfo> &info ) const
                 return e.second.qty > 1 && !e.second.melee();
         } ) ) {
             info.emplace_back( "GUN", _( "Recommended strength (burst): "), "",
-                               ceil( mod->type->weight / 333.0 ), true, "", true, true );
+                               ceil( mod->type->weight / 333.0_gram ), true, "", true, true );
         }
 
         info.emplace_back( "GUN", _( "Reload time: " ),
@@ -1169,9 +1187,9 @@ std::string item::info( bool showtext, std::vector<iteminfo> &info ) const
             info.push_back( iteminfo( "GUNMOD", _( "Sight dispersion: " ), "",
                                       mod->sight_dispersion, true, "", true, true ) );
         }
-        if( mod->aim_cost > 0 ) {
-            info.push_back( iteminfo( "GUNMOD", _( "Aim cost: " ), "",
-                                      mod->aim_cost, true, "", true, true ) );
+        if( mod->aim_speed >= 0 ) {
+            info.push_back( iteminfo( "GUNMOD", _( "Aim speed: " ), "",
+                                      mod->aim_speed, true, "", true, true ) );
         }
         if( mod->damage != 0 ) {
             info.push_back( iteminfo( "GUNMOD", _( "Damage: " ), "", mod->damage, true,
@@ -1186,13 +1204,12 @@ std::string item::info( bool showtext, std::vector<iteminfo> &info ) const
         }
         if( type->mod->ammo_modifier ) {
             info.push_back( iteminfo( "GUNMOD",
-                                      string_format( _( "Ammo: <stat>%s</stat>" ), ammo_name( type->mod->ammo_modifier ).c_str() ) ) );
+                                      string_format( _( "Ammo: <stat>%s</stat>" ), type->mod->ammo_modifier->name().c_str() ) ) );
         }
 
         temp1.str( "" );
-        temp1 << _( "Used on: " ) << enumerate_as_string( mod->usable.begin(), mod->usable.end(), []( const std::string &used_on ) {
-            //~ a weapon type which a gunmod is compatible (eg. "pistol", "crossbow", "rifle")
-            return string_format( "<info>%s</info>", _( used_on.c_str() ) );
+        temp1 << _( "Used on: " ) << enumerate_as_string( mod->usable.begin(), mod->usable.end(), []( const gun_type_type &used_on ) {
+            return string_format( "<info>%s</info>", used_on.name().c_str() );
         } );
 
         temp2.str( "" );
@@ -1336,9 +1353,11 @@ std::string item::info( bool showtext, std::vector<iteminfo> &info ) const
                 }
             }
 
-            info.push_back( iteminfo( "BOOK", "",
-                                      _( "Requires <info>intelligence of</info> <num> to easily read." ),
-                                      book->intel, true, "", true, true ) );
+            if( book->intel != 0 ) {
+                info.push_back( iteminfo( "BOOK", "",
+                                          _( "Requires <info>intelligence of</info> <num> to easily read." ),
+                                          book->intel, true, "", true, true ) );
+            }
             if( book->fun != 0 ) {
                 info.push_back( iteminfo( "BOOK", "",
                                           _( "Reading this book affects your morale by <num>" ),
@@ -1438,7 +1457,7 @@ std::string item::info( bool showtext, std::vector<iteminfo> &info ) const
             if( ammo_type() ) {
                 //~ "%s" is ammunition type. This types can't be plural.
                 tmp = ngettext( "Maximum <num> charge of %s.", "Maximum <num> charges of %s.", ammo_capacity() );
-                tmp = string_format( tmp, _( ammo_name( ammo_type() ).c_str() ) );
+                tmp = string_format( tmp, ammo_type()->name().c_str() );
             } else {
                 tmp = ngettext( "Maximum <num> charge.", "Maximum <num> charges.", ammo_capacity() );
             }
@@ -1502,7 +1521,7 @@ std::string item::info( bool showtext, std::vector<iteminfo> &info ) const
         } else if( idescription != item_vars.end() ) {
             info.push_back( iteminfo( "DESCRIPTION", idescription->second ) );
         } else {
-            info.push_back( iteminfo( "DESCRIPTION", type->description ) );
+            info.push_back( iteminfo( "DESCRIPTION", _( type->description.c_str() ) ) );
         }
         auto all_techniques = type->techniques;
         all_techniques.insert( techniques.begin(), techniques.end() );
@@ -1510,7 +1529,7 @@ std::string item::info( bool showtext, std::vector<iteminfo> &info ) const
             insert_separation_line();
             info.push_back( iteminfo( "DESCRIPTION", _( "Techniques: " ) +
             enumerate_as_string( all_techniques.begin(), all_techniques.end(), []( const matec_id &tid ) {
-                return string_format( "<stat>%s</stat>", tid.obj().name.c_str() );
+                return string_format( "<stat>%s:</stat> <info>%s</info>", tid.obj().name.c_str(), tid.obj().description.c_str() );
             } ) ) );
         }
 
@@ -1518,11 +1537,45 @@ std::string item::info( bool showtext, std::vector<iteminfo> &info ) const
             insert_separation_line();
             if( has_flag( "REACH3" ) ) {
                 info.push_back( iteminfo( "DESCRIPTION",
-                                          _( "This item can be used to make <info>long reach attacks</info>." ) ) );
+                                          _( "* This item can be used to make <stat>long reach attacks</stat>." ) ) );
             } else {
                 info.push_back( iteminfo( "DESCRIPTION",
-                                          _( "This item can be used to make <info>reach attacks</info>." ) ) );
+                                          _( "* This item can be used to make <stat>reach attacks</stat>." ) ) );
             }
+        }
+
+        ///\EFFECT_MELEE >2 allows seeing melee damage stats on weapons
+        if( debug_mode || ( g->u.get_skill_level( skill_melee ) > 2 && ( damage_melee( DT_BASH ) > 0 ||
+                            damage_melee( DT_CUT ) > 0 || damage_melee( DT_STAB ) > 0 || type->m_to_hit > 0 ) ) ) {
+            damage_instance non_crit;
+            g->u.roll_all_damage( false, non_crit, true, *this );
+            damage_instance crit;
+            g->u.roll_all_damage( true, crit, true, *this );
+            int attack_cost = g->u.attack_speed( *this );
+            insert_separation_line();
+            info.push_back( iteminfo( "DESCRIPTION", string_format( _( "<bold>Average melee damage:</bold>" ) ) ) );
+            info.push_back( iteminfo( "DESCRIPTION",
+                                      string_format( _( "Critical hit chance %d%% - %d%%" ),
+                                              int( g->u.crit_chance( 0, 100, *this ) * 100 ),
+                                              int( g->u.crit_chance( 100, 0, *this ) * 100 ) ) ) );
+            info.push_back( iteminfo( "DESCRIPTION",
+                                      string_format( _( "%d bashing (%d on a critical hit)" ),
+                                              int( non_crit.type_damage( DT_BASH ) ),
+                                              int( crit.type_damage( DT_BASH ) ) ) ) );
+            if( non_crit.type_damage( DT_CUT ) > 0.0f || crit.type_damage( DT_CUT ) > 0.0f ) {
+                info.push_back( iteminfo( "DESCRIPTION",
+                                          string_format( _( "%d cutting (%d on a critical hit)" ),
+                                                  int( non_crit.type_damage( DT_CUT ) ),
+                                                  int( crit.type_damage( DT_CUT ) ) ) ) );
+            }
+            if( non_crit.type_damage( DT_STAB ) > 0.0f || crit.type_damage( DT_STAB ) > 0.0f ) {
+                info.push_back( iteminfo( "DESCRIPTION",
+                                          string_format( _( "%d piercing (%d on a critical hit)" ),
+                                                  int( non_crit.type_damage( DT_STAB ) ),
+                                                  int( crit.type_damage( DT_STAB ) ) ) ) );
+            }
+            info.push_back( iteminfo( "DESCRIPTION",
+                                      string_format( _( "%d moves per attack" ), attack_cost ) ) );
         }
 
         //lets display which martial arts styles character can use with this weapon
@@ -1554,6 +1607,14 @@ std::string item::info( bool showtext, std::vector<iteminfo> &info ) const
 
         } else {
             info.emplace_back( "DESCRIPTION", _( "* This item is <bad>not repairable</bad>." ) );
+        }
+
+        if( !conductive () ) {
+            info.push_back( iteminfo( "BASE", string_format( _( "* This item <good>does not conduct</good> electricity." ) ) ) );
+        } else if( has_flag( "CONDUCTIVE" ) ) {
+            info.push_back( iteminfo( "BASE", string_format( _( "* This item effectively <bad>conducts</bad> electricity, as it has no guard." ) ) ) );
+        } else {
+            info.push_back( iteminfo( "BASE", string_format( _( "* This item <bad>conducts</bad> electricity." ) ) ) );
         }
 
         // concatenate base and acquired flags...
@@ -1636,8 +1697,9 @@ std::string item::info( bool showtext, std::vector<iteminfo> &info ) const
             }
         }
 
-        if( is_bionic() ) {
-            info.push_back( iteminfo( "DESCRIPTION", list_occupied_bps( typeId(),
+        // @todo Unhide when enforcing limits
+        if( is_bionic() && g->u.has_trait( trait_id( "DEBUG_CBM_SLOTS" ) ) ) {
+            info.push_back( iteminfo( "DESCRIPTION", list_occupied_bps( type->bionic->id,
                 _( "This bionic is installed in the following body part(s):" ) ) ) );
         }
 
@@ -1712,40 +1774,6 @@ std::string item::info( bool showtext, std::vector<iteminfo> &info ) const
                                                     []( const itype *e ) { return e->nname( 1 ); } ) );
         }
 
-        ///\EFFECT_MELEE >2 allows seeing melee damage stats on weapons
-        if( debug_mode || ( g->u.get_skill_level( skill_melee ) > 2 && ( damage_melee( DT_BASH ) > 0 ||
-                            damage_melee( DT_CUT ) > 0 || damage_melee( DT_STAB ) > 0 || type->m_to_hit > 0 ) ) ) {
-            damage_instance non_crit;
-            g->u.roll_all_damage( false, non_crit, true, *this );
-            damage_instance crit;
-            g->u.roll_all_damage( true, crit, true, *this );
-            int attack_cost = g->u.attack_speed( *this );
-            insert_separation_line();
-            info.push_back( iteminfo( "DESCRIPTION", string_format( _( "Average melee damage:" ) ) ) );
-            info.push_back( iteminfo( "DESCRIPTION",
-                                      string_format( _( "Critical hit chance %d%% - %d%%" ),
-                                              int( g->u.crit_chance( 0, 100, *this ) * 100 ),
-                                              int( g->u.crit_chance( 100, 0, *this ) * 100 ) ) ) );
-            info.push_back( iteminfo( "DESCRIPTION",
-                                      string_format( _( "%d bashing (%d on a critical hit)" ),
-                                              int( non_crit.type_damage( DT_BASH ) ),
-                                              int( crit.type_damage( DT_BASH ) ) ) ) );
-            if( non_crit.type_damage( DT_CUT ) > 0.0f || crit.type_damage( DT_CUT ) > 0.0f ) {
-                info.push_back( iteminfo( "DESCRIPTION",
-                                          string_format( _( "%d cutting (%d on a critical hit)" ),
-                                                  int( non_crit.type_damage( DT_CUT ) ),
-                                                  int( crit.type_damage( DT_CUT ) ) ) ) );
-            }
-            if( non_crit.type_damage( DT_STAB ) > 0.0f || crit.type_damage( DT_STAB ) > 0.0f ) {
-                info.push_back( iteminfo( "DESCRIPTION",
-                                          string_format( _( "%d piercing (%d on a critical hit)" ),
-                                                  int( non_crit.type_damage( DT_STAB ) ),
-                                                  int( crit.type_damage( DT_STAB ) ) ) ) );
-            }
-            info.push_back( iteminfo( "DESCRIPTION",
-                                      string_format( _( "%d moves per attack" ), attack_cost ) ) );
-        }
-
         for( auto &u : type->use_methods ) {
             const auto tt = dynamic_cast<const delayed_transform_iuse *>( u.second.get_actor_ptr() );
             if( tt == nullptr ) {
@@ -1791,10 +1819,10 @@ std::string item::info( bool showtext, std::vector<iteminfo> &info ) const
                 }
                 insert_separation_line();
                 info.emplace_back( "DESCRIPTION", temp1.str() );
-                info.emplace_back( "DESCRIPTION", mod->type->description );
+                info.emplace_back( "DESCRIPTION", _( mod->type->description.c_str() ) );
             }
             if( !contents.front().type->mod ) {
-                info.emplace_back( "DESCRIPTION", contents.front().type->description );
+                info.emplace_back( "DESCRIPTION", _( contents.front().type->description.c_str() ) );
             }
         }
 
@@ -1899,7 +1927,7 @@ const std::string &item::symbol() const
 nc_color item::color_in_inventory() const
 {
     player* const u = &g->u; // TODO: make a reference, make a const reference
-    nc_color ret = c_ltgray;
+    nc_color ret = c_light_gray;
 
     if(has_flag("WET")) {
         ret = c_cyan;
@@ -1908,7 +1936,7 @@ nc_color item::color_in_inventory() const
     } else if( is_filthy() ) {
         ret = c_brown;
     } else if ( has_flag("LEAK_DAM") && has_flag("RADIOACTIVE") && damage() > 0 ) {
-        ret = c_ltgreen;
+        ret = c_light_green;
     } else if (active && !is_food() && !is_food_container()) { // Active items show up as yellow
         ret = c_yellow;
     } else if( is_food() || is_food_container() ) {
@@ -1920,9 +1948,9 @@ nc_color item::color_in_inventory() const
         // Red: morale penalty
         // Yellow: will rot soon
         // Cyan: will rot eventually
-        const auto rating = u->can_eat( to_color );
+        const auto rating = u->will_eat( to_color );
         // TODO: More colors
-        switch( rating ) {
+        switch( rating.value() ) {
             case EDIBLE:
             case TOO_FULL:
                 if( preserves ) {
@@ -1935,7 +1963,7 @@ nc_color item::color_in_inventory() const
                 break;
             case INEDIBLE:
             case INEDIBLE_MUTATION:
-                ret = c_dkgray;
+                ret = c_dark_gray;
                 break;
             case ALLERGY:
             case ALLERGY_WEAK:
@@ -1945,6 +1973,9 @@ nc_color item::color_in_inventory() const
             case ROTTEN:
                 ret = c_brown;
                 break;
+            case NAUSEA:
+                ret = c_pink;
+                break;
             case NO_TOOL:
                 break;
         }
@@ -1953,24 +1984,29 @@ nc_color item::color_in_inventory() const
         // ltred if you have ammo but no mags
         // Gun with integrated mag counts as both
         ammotype amtype = ammo_type();
-        bool has_ammo = !u->find_ammo( *this, false, -1 ).empty();
+        // get_ammo finds uncontained ammo, find_ammo finds ammo in magazines
+        bool has_ammo = !u->get_ammo( amtype ).empty() || !u->find_ammo( *this, false, -1 ).empty();
         bool has_mag = magazine_integral() || !u->find_ammo( *this, true, -1 ).empty();
         if( has_ammo && has_mag ) {
             ret = c_green;
         } else if( has_ammo || has_mag ) {
-            ret = c_ltred;
+            ret = c_light_red;
         }
     } else if( is_ammo() ) {
         // Likewise, ammo is green if you have guns that use it
         // ltred if you have the gun but no mags
         // Gun with integrated mag counts as both
-        ammotype amtype = ammo_type();
-        bool has_gun = u->has_gun_for_ammo( amtype );
-        bool has_mag = u->has_magazine_for_ammo( amtype );
+        bool has_gun = u->has_item_with( [this]( const item &i ) {
+            return i.is_gun() && type->ammo->type.count( i.ammo_type() );
+        } );
+        bool has_mag = u->has_item_with( [this]( const item &i ) {
+            return ( i.is_gun() && i.magazine_integral() && type->ammo->type.count( i.ammo_type() ) ) ||
+                ( i.is_magazine() && type->ammo->type.count( i.ammo_type() ) );
+        } );
         if( has_gun && has_mag ) {
             ret = c_green;
         } else if( has_gun || has_mag ) {
-            ret = c_ltred;
+            ret = c_light_red;
         }
     } else if( is_magazine() ) {
         // Magazines are green if you have guns and ammo for them
@@ -1983,7 +2019,7 @@ nc_color item::color_in_inventory() const
         if( has_gun && has_ammo ) {
             ret = c_green;
         } else if( has_gun || has_ammo ) {
-            ret = c_ltred;
+            ret = c_light_red;
         }
     } else if (is_book()) {
         if(u->has_identified( typeId() )) {
@@ -1992,7 +2028,7 @@ nc_color item::color_in_inventory() const
                 u->get_skill_level( tmp.skill ).can_train() &&
                 u->get_skill_level( tmp.skill ) >= tmp.req &&
                 u->get_skill_level( tmp.skill ) < tmp.level ) {
-                ret = c_ltblue;
+                ret = c_light_blue;
             } else if( tmp.skill && // Book can't improve skill right now, but maybe later: pink
                        u->get_skill_level( tmp.skill ).can_train() &&
                        u->get_skill_level( tmp.skill ) < tmp.level ) {
@@ -2004,8 +2040,8 @@ nc_color item::color_in_inventory() const
             ret = c_red; // Book hasn't been identified yet: red
         }
     } else if (is_bionic()) {
-        if (!u->has_bionic(typeId())) {
-            ret = u->bionic_installation_issues( typeId() ).empty() ? c_green : c_red;
+        if( !u->has_bionic( type->bionic->id ) ) {
+            ret = u->bionic_installation_issues( type->bionic->id ).empty() ? c_green : c_red;
         }
     }
     return ret;
@@ -2402,13 +2438,18 @@ int item::price( bool practical ) const
 }
 
 // MATERIALS-TODO: add a density field to materials.json
-int item::weight( bool include_contents ) const
+units::mass item::weight( bool include_contents ) const
 {
     if( is_null() ) {
         return 0;
     }
 
-    int ret = get_var( "weight", type->weight );
+    // Items that don't drop aren't really there, they're items just for ease of implementation
+    if( has_flag( "NO_DROP" ) ) {
+        return 0;
+    }
+
+    units::mass ret = units::from_gram( get_var( "weight", to_gram( type->weight ) ) );
     if( has_flag( "REDUCED_WEIGHT" ) ) {
         ret *= 0.75;
     }
@@ -2418,11 +2459,11 @@ int item::weight( bool include_contents ) const
 
     } else if( is_corpse() ) {
         switch( corpse->size ) {
-            case MS_TINY:   ret =   1000;  break;
-            case MS_SMALL:  ret =  40750;  break;
-            case MS_MEDIUM: ret =  81500;  break;
-            case MS_LARGE:  ret = 120000;  break;
-            case MS_HUGE:   ret = 200000;  break;
+            case MS_TINY:   ret =   1000_gram;  break;
+            case MS_SMALL:  ret =  40750_gram;  break;
+            case MS_MEDIUM: ret =  81500_gram;  break;
+            case MS_LARGE:  ret = 120000_gram;  break;
+            case MS_HUGE:   ret = 200000_gram;  break;
         }
         if( made_of( material_id( "veggy" ) ) ) {
             ret /= 3;
@@ -2435,7 +2476,7 @@ int item::weight( bool include_contents ) const
 
     } else if( magazine_integral() && !is_magazine() ) {
         if ( ammo_type() == ammotype( "plutonium" ) ) {
-            ret += ammo_remaining() * find_type( default_ammo( ammo_type() ) )->weight / PLUTONIUM_CHARGES;
+            ret += ammo_remaining() * find_type( ammo_type()->default_ammotype() )->weight / PLUTONIUM_CHARGES;
         } else if( ammo_data() ) {
             ret += ammo_remaining() * ammo_data()->weight;
         }
@@ -2451,8 +2492,8 @@ int item::weight( bool include_contents ) const
     // reduce weight for sawn-off weepons capped to the apportioned weight of the barrel
     if( gunmod_find( "barrel_small" ) ) {
         const units::volume b = type->gun->barrel_length;
-        const int max_barrel_weight = to_milliliter( b );
-        const int barrel_weight = b * type->weight / type->volume;
+        const units::mass max_barrel_weight = units::from_gram( to_milliliter( b ) );
+        const units::mass barrel_weight = units::from_gram( b.value() * type->weight.value() / type->volume.value() );
         ret -= std::min( max_barrel_weight, barrel_weight );
     }
 
@@ -2555,12 +2596,12 @@ units::volume item::volume( bool integral ) const
 
 int item::lift_strength() const
 {
-    return weight() / STR_LIFT_FACTOR + ( weight() % STR_LIFT_FACTOR != 0 );
+    return weight() / STR_LIFT_FACTOR + ( weight().value() % STR_LIFT_FACTOR.value() != 0 );
 }
 
 int item::attack_time() const
 {
-    int ret = 65 + volume() / 62.5_ml + weight() / 60;
+    int ret = 65 + volume() / 62.5_ml + weight() / 60_gram;
     return ret;
 }
 
@@ -2734,6 +2775,24 @@ long item::get_property_long( const std::string& prop, long def ) const
 int item::get_quality( const quality_id &id ) const
 {
     int return_quality = INT_MIN;
+
+    /**
+     * EXCEPTION: Items with quality BOIL only count as such if they are empty,
+     * excluding items of their ammo type if they are tools.
+     */
+    if ( id == quality_id( "BOIL" ) && !( contents.empty() || 
+        ( is_tool() && std::all_of( contents.begin(), contents.end(),
+        [this]( const item & itm ) {
+            if ( !itm.is_ammo() ) {
+                return false;
+            }
+            auto& ammo_types = itm.type->ammo->type;
+            return ammo_types.find( ammo_type() ) != ammo_types.end();
+        } ) ) ) )
+    {
+        return INT_MIN;
+    }
+
     for( const auto &quality : type->qualities ) {
         if( quality.first == id ) {
             return_quality = quality.second;
@@ -2847,7 +2906,7 @@ void item::calc_rot(const tripoint &location)
 {
     const int now = calendar::turn;
     if ( last_rot_check + 10 < now ) {
-        const int since = ( last_rot_check == 0 ? bday : last_rot_check );
+        const int since = ( last_rot_check == 0 ? to_turn<int>( bday ) : last_rot_check );
         const int until = ( fridge > 0 ? fridge : now );
         if ( since < until ) {
             // rot (outside of fridge) from bday/last_rot_check until fridge/now
@@ -2928,11 +2987,11 @@ int item::get_encumber() const
         encumber += 1 + 4 * coverage / 100;
     }
 
-    if( item_tags.count("leather_padded") ) {
-        encumber += thickness * coverage / 100 + 5;
+    if( item_tags.count( "leather_padded" ) ) {
+        encumber += ceil( 2 * thickness * coverage / 100.0f );
     }
-    if( item_tags.count("kevlar_padded") ) {
-        encumber += thickness * coverage / 100 + 5;
+    if( item_tags.count( "kevlar_padded" ) ) {
+        encumber += ceil( 2 * thickness * coverage / 100.0f );
     }
 
     return encumber;
@@ -3019,7 +3078,7 @@ bool item::ready_to_revive( const tripoint &pos ) const
     if(can_revive() == false) {
         return false;
     }
-    int age_in_hours = (int(calendar::turn) - bday) / HOURS( 1 );
+    int age_in_hours = to_hours<int>( age() );
     age_in_hours -= int((float)burnt / ( volume() / 250_ml ) );
     if( damage() > 0 ) {
         age_in_hours /= ( damage() + 1 );
@@ -3066,28 +3125,15 @@ bool item::craft_has_charges()
 
 int item::bash_resist( bool to_self ) const
 {
-    float resist = 0;
-    float l_padding = 0;
-    float k_padding = 0;
-    int eff_thickness = 1;
-    // With the multiplying and dividing in previous code, the following
-    // is a coefficient equivalent to the bonuses and maluses hardcoded in
-    // previous versions. Adjust to make you happier/sadder.
-    float adjustment = 1.5;
-
-    static constexpr float max_value = 10.0f;
-    static constexpr float stepness = -0.8f;
-    static constexpr float center_of_S = 2.0f;
-
     if( is_null() ) {
-        return resist;
+        return 0;
     }
-    if( item_tags.count("leather_padded") > 0 ){
-        l_padding = max_value / ( 1 + exp( stepness * ( get_thickness() - center_of_S )));
-    }
-    if( item_tags.count("kevlar_padded") > 0 ){
-        k_padding = max_value / ( 1 + exp( stepness * ( get_thickness() - center_of_S )));
-    }
+
+    const int base_thickness = get_thickness();
+    float resist = 0;
+    float padding = 0;
+    int eff_thickness = 1;
+
     // Armor gets an additional multiplier.
     if( is_armor() ) {
         // base resistance
@@ -3095,6 +3141,12 @@ int item::bash_resist( bool to_self ) const
         const int dmg = damage();
         const int eff_damage = to_self ? std::min( dmg , 0 ) : std::max( dmg, 0 );
         eff_thickness = std::max( 1, get_thickness() - eff_damage );
+    }
+    if( item_tags.count( "leather_padded" ) > 0 ) {
+        padding += base_thickness;
+    }
+    if( item_tags.count("kevlar_padded") > 0 ) {
+        padding += base_thickness;
     }
 
     const std::vector<const material_type*> mat_types = made_of_types();
@@ -3106,42 +3158,33 @@ int item::bash_resist( bool to_self ) const
         resist /= mat_types.size();
     }
 
-    return lround((resist * eff_thickness * adjustment) + l_padding + k_padding);
+    return lround( ( resist * eff_thickness ) + padding );
 }
 
 int item::cut_resist( bool to_self ) const
 {
-    float resist = 0;
-    float l_padding = 0;
-    float k_padding = 0;
-    int eff_thickness = 1;
-    // With the multiplying and dividing in previous code, the following
-    // is a coefficient equivalent to the bonuses and maluses hardcoded in
-    // previous versions. Adjust to make you happier/sadder.
-    float adjustment = 1.5;
-
     if( is_null() ) {
-        return resist;
+        return 0;
     }
-    if( item_tags.count("leather_padded") > 0 ){
-        static constexpr float max_value = 10.0f;
-        static constexpr float stepness = -0.8f;
-        static constexpr float center_of_S = 2.0f;
-        l_padding = max_value / ( 1 + exp( stepness * ( get_thickness() - center_of_S )));
-    }
-    if( item_tags.count("kevlar_padded") > 0 ){
-        static constexpr float max_value = 15.0f;
-        static constexpr float stepness = -0.5f;
-        static constexpr float center_of_S = 2.0f;
-        k_padding = max_value / ( 1 + exp( stepness * ( get_thickness() - center_of_S )));
-    }
+
+    const int base_thickness = get_thickness();
+    float resist = 0;
+    float padding = 0;
+    int eff_thickness = 1;
+
     // Armor gets an additional multiplier.
     if( is_armor() ) {
         // base resistance
         // Don't give reinforced items +armor, just more resistance to ripping
         const int dmg = damage();
         const int eff_damage = to_self ? std::min(dmg, 0) : std::max(dmg, 0);
-        eff_thickness = std::max( 1, get_thickness() - eff_damage );
+        eff_thickness = std::max( 1, base_thickness - eff_damage );
+    }
+    if( item_tags.count( "leather_padded" ) > 0 ) {
+        padding += base_thickness;
+    }
+    if( item_tags.count("kevlar_padded") > 0 ) {
+        padding += base_thickness * 2;
     }
 
     const std::vector<const material_type*> mat_types = made_of_types();
@@ -3153,7 +3196,7 @@ int item::cut_resist( bool to_self ) const
         resist /= mat_types.size();
     }
 
-    return lround((resist * eff_thickness * adjustment) + l_padding + k_padding);
+    return lround( ( resist * eff_thickness ) + padding );
 }
 
 #ifdef _MSC_VER
@@ -3280,25 +3323,35 @@ bool item::mod_damage( double qty, damage_type dt )
     return destroy;
 }
 
+bool item::mod_damage( const double qty )
+{
+    return mod_damage( qty, DT_NULL );
+}
+
+bool item::inc_damage()
+{
+    return inc_damage( DT_NULL );
+}
+
 nc_color item::damage_color() const
 {
     // @todo unify with getDurabilityColor
 
     // reinforced, undamaged and nearly destroyed items are special case
-    if( damage() < 0 ) {
+    if( precise_damage() <= min_damage() ) {
         return c_green;
     }
-    if( damage() == 0 ) {
-        return c_ltgreen;
+    if( damage() <= 0 ) {
+        return c_light_green;
     }
     if( damage() == max_damage() ) {
         return c_red;
     }
 
     // assign other colors proportionally
-    auto q = double( damage() ) / max_damage();
+    auto q = precise_damage() / max_damage();
     if( q > 0.66 ) {
-        return c_ltred;
+        return c_light_red;
     }
     if( q > 0.33 ) {
         return c_magenta;
@@ -3319,8 +3372,8 @@ std::string item::damage_symbol() const
         return _( R"(..)" );
     }
 
-    // assign other colors proportionally
-    auto q = double( damage() ) / max_damage();
+    // assign other symbols proportionally
+    auto q = precise_damage() / max_damage();
     if( q > 0.66 ) {
         return _( R"(\.)" );
     }
@@ -3381,7 +3434,7 @@ bool item::is_two_handed( const player &u ) const
         return true;
     }
     ///\EFFECT_STR determines which weapons can be wielded with one hand
-    return ((weight() / 113) > u.str_cur * 4);
+    return ( ( weight() / 113_gram ) > u.str_cur * 4 );
 }
 
 const std::vector<material_id> &item::made_of() const
@@ -3692,10 +3745,23 @@ bool item::is_container_full( bool allow_bucket ) const
     return get_remaining_capacity_for_liquid( contents.front(), allow_bucket ) == 0;
 }
 
+bool item::can_reload_with( const itype_id& ammo ) const
+{
+    return is_reloadable_helper( ammo, false );
+}
+
 bool item::is_reloadable_with( const itype_id& ammo ) const
+{
+    return is_reloadable_helper( ammo, true );
+}
+
+bool item::is_reloadable_helper( const itype_id& ammo, bool now ) const
 {
     if( !is_reloadable() ) {
         return false;
+    } else if( is_watertight_container() ) {
+        return ( now ? !is_container_full() : true ) &&
+            ( ammo.empty() || is_container_empty() || contents.front().typeId() == ammo );
     } else if( magazine_integral() ) {
         if( !ammo.empty() ) {
             if( ammo_data() ) {
@@ -3709,7 +3775,7 @@ bool item::is_reloadable_with( const itype_id& ammo ) const
                 }
             }
         }
-        return ammo_remaining() < ammo_capacity();
+        return now ? ( ammo_remaining() < ammo_capacity() ) : true;
     } else {
         return ammo.empty() ? true : magazine_compatible().count( ammo );
     }
@@ -3758,7 +3824,7 @@ bool item::is_tool_reversible() const
     if( is_tool() && type->tool->revert_to != "null" ) {
         item revert( type->tool->revert_to );
         npc n;
-        revert.type->invoke( &n, &revert, tripoint(-999, -999, -999) );
+        revert.type->invoke( n, revert, tripoint(-999, -999, -999) );
         return revert.is_tool() && typeId() == revert.typeId();
     }
     return false;
@@ -3861,13 +3927,13 @@ void item::mark_chapter_as_read( const player &u )
 
 const material_type &item::get_random_material() const
 {
-    return random_entry( made_of(), material_id::NULL_ID ).obj();
+    return random_entry( made_of(), material_id::NULL_ID() ).obj();
 }
 
 const material_type &item::get_base_material() const
 {
     const auto mats = made_of();
-    return mats.empty() ? material_id::NULL_ID.obj() : mats.front().obj();
+    return mats.empty() ? material_id::NULL_ID().obj() : mats.front().obj();
 }
 
 bool item::operator<(const item& other) const
@@ -3894,32 +3960,34 @@ bool item::operator<(const item& other) const
 skill_id item::gun_skill() const
 {
     if( !is_gun() ) {
-        return skill_id::NULL_ID;
+        return skill_id::NULL_ID();
     }
     return type->gun->skill_used;
 }
 
-std::string item::gun_type() const
+gun_type_type item::gun_type() const
 {
     static skill_id skill_archery( "archery" );
 
     if( !is_gun() ) {
-        return std::string();
+        return gun_type_type( std::string() );
     }
+    //@todo move to JSON and remove extraction of this from "GUN" (via skill id)
+    //and from "GUNMOD" (via "mod_targets") in lang/extract_json_strings.py
     if( gun_skill() == skill_archery ) {
         if( ammo_type() == ammotype( "bolt" ) || typeId() == "bullet_crossbow" ) {
-            return "crossbow";
+            return gun_type_type( translate_marker_context( "gun_type_type", "crossbow" ) );
         } else{
-            return "bow";
+            return gun_type_type( translate_marker_context( "gun_type_type", "bow" ) );
         }
     }
-    return gun_skill().c_str();
+    return gun_type_type( gun_skill().str() );
 }
 
 skill_id item::melee_skill() const
 {
     if( !is_melee() ) {
-        return skill_id::NULL_ID;
+        return skill_id::NULL_ID();
     }
 
     if( has_flag( "UNARMED_WEAPON" ) ) {
@@ -3927,7 +3995,7 @@ skill_id item::melee_skill() const
     }
 
     int hi = 0;
-    skill_id res = skill_id::NULL_ID;
+    skill_id res = skill_id::NULL_ID();
 
     for( auto idx = DT_NULL + 1; idx != NUM_DT; ++idx ) {
         auto val = damage_melee( static_cast<damage_type>( idx ) );
@@ -3951,11 +4019,14 @@ int item::gun_dispersion( bool with_ammo ) const
         dispersion_sum += mod->type->gunmod->dispersion;
     }
     dispersion_sum += damage() * 60;
-    dispersion_sum = std::max(dispersion_sum, 0);
+    dispersion_sum = std::max( dispersion_sum, 0 );
     if( with_ammo && ammo_data() ) {
         dispersion_sum += ammo_data()->ammo->dispersion;
     }
-    dispersion_sum = std::max(dispersion_sum, 0);
+    // Dividing dispersion by 3 temporarally as a gross adjustment,
+    // will bake that adjustment into individual gun definitions in the future.
+    // Absolute minimum gun dispersion is 45.
+    dispersion_sum = std::max( dispersion_sum / 3, 45 );
     return dispersion_sum;
 }
 
@@ -3965,11 +4036,11 @@ int item::sight_dispersion() const
         return 0;
     }
 
-    int res = has_flag( "DISABLE_SIGHTS" ) ? MIN_RECOIL : type->gun->sight_dispersion;
+    int res = has_flag( "DISABLE_SIGHTS" ) ? 500 : type->gun->sight_dispersion;
 
     for( const auto e : gunmods() ) {
         const auto mod = e->type->gunmod.get();
-        if( mod->sight_dispersion < 0 || mod->aim_cost <= 0 ) {
+        if( mod->sight_dispersion < 0 || mod->aim_speed < 0 ) {
             continue; // skip gunmods which don't provide a sight
         }
         res = std::min( res, mod->sight_dispersion );
@@ -4018,7 +4089,7 @@ int item::gun_recoil( const player &p, bool bipod ) const
 
     ///\EFFECT_STR improves the handling of heavier weapons
     // we consider only base weight to avoid exploits
-    double wt = std::min( type->weight, p.str_cur * 333 ) / 333.0;
+    double wt = std::min( type->weight, p.str_cur * 333_gram ) / 333.0_gram;
 
     double handling = type->gun->handling;
     for( const auto mod : gunmods() ) {
@@ -4073,7 +4144,7 @@ int item::gun_range( const player *p ) const
 
     // Reduce bow range until player has twice minimm required strength
     if( has_flag( "STR_DRAW" ) ) {
-        ret -= std::max( 0, type->min_str * 2 - p->get_str() );
+        ret += std::max( 0.0, ( p->get_str() - type->min_str ) * 0.5 );
     }
 
     return std::max( 0, ret );
@@ -4229,6 +4300,14 @@ const itype * item::ammo_data() const
         return !contents.empty() ? contents.front().ammo_data() : nullptr;
     }
 
+    auto mods = is_gun() ? gunmods() : toolmods();
+    for( const auto e : mods ) {
+        if( e->type->mod->ammo_modifier &&
+            item_controller->has_template( itype_id( e->type->mod->ammo_modifier.str() ) ) ) {
+            return item_controller->find_template( itype_id( e->type->mod->ammo_modifier.str() ) );
+        }
+    }
+
     return curammo;
 }
 
@@ -4256,12 +4335,12 @@ ammotype item::ammo_type( bool conversion ) const
     } else if( is_magazine() ) {
         return type->magazine->type;
     }
-    return ammotype::NULL_ID;
+    return ammotype::NULL_ID();
 }
 
 itype_id item::ammo_default( bool conversion ) const
 {
-    auto res = default_ammo( ammo_type( conversion ) );
+    auto res = ammo_type( conversion )->default_ammotype();
     return !res.empty() ? res : "NULL";
 }
 
@@ -4275,6 +4354,11 @@ std::set<std::string> item::ammo_effects( bool with_ammo ) const
     if( with_ammo && ammo_data() ) {
         res.insert( ammo_data()->ammo->ammo_effects.begin(), ammo_data()->ammo->ammo_effects.end() );
     }
+
+    for( const auto mod : gunmods() ) {
+            res.insert( mod->type->gunmod->ammo_effects.begin(), mod->type->gunmod->ammo_effects.end() );
+    }
+
     return res;
 }
 
@@ -4373,62 +4457,56 @@ const item * item::gunmod_find( const itype_id& mod ) const
     return const_cast<item *>( this )->gunmod_find( mod );
 }
 
-bool item::gunmod_compatible( const item& mod, std::string *msg ) const
+ret_val<bool> item::is_gunmod_compatible( const item& mod ) const
 {
     if( !mod.is_gunmod() ) {
         debugmsg( "Tried checking compatibility of non-gunmod" );
-        return false;
+        return ret_val<bool>::make_failure();
     }
-
-    const auto error = [ msg ]( const std::string &error_msg ) {
-        if( msg != nullptr ) {
-            *msg = error_msg;
-        }
-        return false;
-    };
+    static const gun_type_type pistol_gun_type( translate_marker_context( "gun_type_type", "pistol" ) );
 
     if( !is_gun() ) {
-        return error( string_format( _( "isn't a weapon" ) ) );
+        return ret_val<bool>::make_failure( _( "isn't a weapon" ) );
 
     } else if( is_gunmod() ) {
-        return error( string_format( _( "is a gunmod and cannot be modded" ) ) );
+        return ret_val<bool>::make_failure( _( "is a gunmod and cannot be modded" ) );
 
     } else if( gunmod_find( mod.typeId() ) ) {
-        return error( string_format( _( "already has a %s" ), mod.tname( 1 ).c_str() ) );
+        return ret_val<bool>::make_failure( _( "already has a %s" ), mod.tname( 1 ).c_str() );
 
     } else if( !type->gun->valid_mod_locations.count( mod.type->gunmod->location ) ) {
-        return error( string_format( _( "doesn't have a slot for this mod" ) ) );
+        return ret_val<bool>::make_failure( _( "doesn't have a slot for this mod" ) );
 
     } else if( get_free_mod_locations( mod.type->gunmod->location ) <= 0 ) {
-        return error( string_format( _( "doesn't have enough room for another %s mod" ),
-                                     mod.type->gunmod->location.name().c_str() ) );
+        return ret_val<bool>::make_failure( _( "doesn't have enough room for another %s mod" ),
+                                            mod.type->gunmod->location.name().c_str() );
 
     } else if( !mod.type->gunmod->usable.count( gun_type() ) ) {
-        return error( string_format( _( "cannot have a %s" ), mod.tname().c_str() ) );
+        return ret_val<bool>::make_failure( _( "cannot have a %s" ), mod.tname().c_str() );
 
-    } else if( typeId() == "hand_crossbow" && !!mod.type->gunmod->usable.count( "pistol" ) ) {
-        return error( string_format( _("isn't big enough to use that mod") ) );
+    } else if( typeId() == "hand_crossbow" && !!mod.type->gunmod->usable.count( pistol_gun_type ) ) {
+        return ret_val<bool>::make_failure( _("isn't big enough to use that mod") );
 
     } else if ( !mod.type->mod->acceptable_ammo.empty() && !mod.type->mod->acceptable_ammo.count( ammo_type( false ) ) ) {
         //~ %1$s - name of the gunmod, %2$s - name of the ammo
-        return error( string_format( _( "%1$s cannot be used on %2$s" ), mod.tname( 1 ).c_str(),
-                                     ammo_name( ammo_type( false ) ).c_str() ) );
+        return ret_val<bool>::make_failure( _( "%1$s cannot be used on %2$s" ), mod.tname( 1 ).c_str(),
+                                            ammo_type( false )->name().c_str() );
 
     } else if( mod.typeId() == "waterproof_gunmod" && has_flag( "WATERPROOF_GUN" ) ) {
-        return error( string_format( _( "is already waterproof" ) ) );
+        return ret_val<bool>::make_failure( _( "is already waterproof" ) );
 
     } else if( mod.typeId() == "tuned_mechanism" && has_flag( "NEVER_JAMS" ) ) {
-        return error( string_format( _( "is already eminently reliable" ) ) );
+        return ret_val<bool>::make_failure( _( "is already eminently reliable" ) );
 
     } else if( mod.typeId() == "brass_catcher" && has_flag( "RELOAD_EJECT" ) ) {
-        return error( string_format( _( "cannot have a brass catcher" ) ) );
+        return ret_val<bool>::make_failure( _( "cannot have a brass catcher" ) );
 
     } else if( ( mod.type->mod->ammo_modifier || !mod.type->mod->magazine_adaptor.empty() )
                && ( ammo_remaining() > 0 || magazine_current() ) ) {
-        return error( string_format( _( "must be unloaded before installing this mod" ) ) );
+        return ret_val<bool>::make_failure( _( "must be unloaded before installing this mod" ) );
     }
 
-    return true;
+    return ret_val<bool>::make_success();
 }
 
 std::map<std::string, const item::gun_mode> item::gun_all_modes() const
@@ -4613,9 +4691,11 @@ item::reload_option::reload_option( const player *who, const item *target, const
     }
 
     // magazine, ammo or ammo container
-    item& tmp = this->ammo->is_ammo_container() ? this->ammo->contents.front() : *this->ammo;
+    item& tmp = ( this->ammo->is_ammo_container() || this->ammo->is_watertight_container() )
+        ? this->ammo->contents.front()
+        : *this->ammo;
 
-    if( tmp.is_ammo() && !target->has_flag( "RELOAD_ONE" ) ) {
+    if( this->ammo->is_watertight_container() || ( tmp.is_ammo() && !target->has_flag( "RELOAD_ONE" ) ) ) {
         qty( tmp.charges );
     } else {
         qty( 1 );
@@ -4638,18 +4718,29 @@ int item::reload_option::moves() const
 
 void item::reload_option::qty( long val )
 {
-    if( ammo->is_magazine() ) {
+    if( ammo->is_magazine() || target->has_flag( "RELOAD_ONE" )) {
         qty_ = 1L;
         return;
     }
 
-    const item &obj = ammo->is_ammo_container() ? ammo->contents.front() : *ammo;
-    if( !obj.is_ammo() ) {
-        debugmsg( "Invalid reload option: %s", obj.tname().c_str() );
+    item* obj = nullptr;
+    bool is_ammo_container = ammo->is_ammo_container();
+    bool is_liquid_container = ammo->is_watertight_container();
+    if ( is_ammo_container || is_liquid_container ) {
+        obj = &( ammo->contents.front() );
+    } else {
+        obj = &*ammo;
+    }
+
+    if( ( is_ammo_container && !obj->is_ammo() ) ||
+            ( is_liquid_container && !obj->made_of( LIQUID ) ) ) {
+        debugmsg( "Invalid reload option: %s", obj->tname().c_str() );
         return;
     }
 
-    long limit = target->ammo_capacity() - target->ammo_remaining();
+    long limit = is_liquid_container
+            ? target->get_remaining_capacity_for_liquid( *obj, true )
+            : target->ammo_capacity() - target->ammo_remaining();
 
     if( target->ammo_type() == ammotype( "plutonium" ) ) {
         limit = limit / PLUTONIUM_CHARGES + ( limit % PLUTONIUM_CHARGES != 0 );
@@ -4657,10 +4748,11 @@ void item::reload_option::qty( long val )
 
     // constrain by available ammo, target capacity and other external factors (max_qty)
     // @ref max_qty is currently set when reloading ammo belts and limits to available linkages
-    qty_ = std::min( { val, obj.charges, limit, max_qty } );
+    qty_ = std::min( { val, obj->charges, limit, max_qty } );
 
     // always expect to reload at least one charge
     qty_ = std::max( qty_, 1L );
+
 }
 
 int item::casings_count() const
@@ -4708,7 +4800,7 @@ bool item::reload( player &u, item_location loc, long qty )
     }
 
     item *container = nullptr;
-    if ( ammo->is_ammo_container() ) {
+    if ( ammo->is_ammo_container() || ammo->is_watertight_container() ) {
         container = ammo;
         ammo = &ammo->contents.front();
     }
@@ -4718,7 +4810,9 @@ bool item::reload( player &u, item_location loc, long qty )
     }
 
     // limit quantity of ammo loaded to remaining capacity
-    long limit = ammo_capacity() - ammo_remaining();
+    long limit = is_watertight_container()
+        ? get_remaining_capacity_for_liquid( *ammo )
+        : ammo_capacity() - ammo_remaining();
 
     if( ammo_type() == ammotype( "plutonium" ) ) {
         limit = limit / PLUTONIUM_CHARGES + ( limit % PLUTONIUM_CHARGES != 0 );
@@ -4743,6 +4837,12 @@ bool item::reload( player &u, item_location loc, long qty )
         contents.back().charges = qty;
         ammo->charges -= qty;
 
+    } else if ( is_watertight_container() ) {
+        if( !ammo->made_of( LIQUID ) ) {
+            debugmsg( "Tried to reload liquid container with non-liquid." );
+            return false;
+        }
+        fill_with( *ammo, qty );
     } else if ( !magazine_integral() ) {
         // if we already have a magazine loaded prompt to eject it
         if( magazine_current() ) {
@@ -4790,7 +4890,7 @@ bool item::reload( player &u, item_location loc, long qty )
     return true;
 }
 
-bool item::burn( fire_data &frd )
+bool item::burn( fire_data &frd, bool contained)
 {
     const auto &mats = made_of();
     float smoke_added = 0.0f;
@@ -4804,8 +4904,13 @@ bool item::burn( fire_data &frd )
             return false;
         }
 
-        if( bd.chance_in_volume == 0 || bd.chance_in_volume >= vol ||
-            x_in_y( bd.chance_in_volume, vol ) ) {
+        // If fire is contained, burn all of it continously
+        if( bd.chance_in_volume == 0 ||  !contained ) {
+            time_added += bd.fuel;
+            smoke_added += bd.smoke;
+            burn_added += bd.burn;
+
+        } else if( bd.chance_in_volume >= vol || x_in_y( bd.chance_in_volume, vol ) ){
             time_added += bd.fuel;
             smoke_added += bd.smoke;
             burn_added += bd.burn;
@@ -4846,7 +4951,7 @@ bool item::burn( fire_data &frd )
             !mt->burn_into.is_null() && mt->burn_into.is_valid() ) {
             corpse = &get_mtype()->burn_into.obj();
             // Delay rezing
-            bday = calendar::turn;
+            set_age( 0 );
             burnt = 0;
             return false;
         }
@@ -4978,7 +5083,9 @@ long item::get_remaining_capacity_for_liquid( const item &liquid, bool allow_buc
 
     long remaining_capacity = 0;
 
-    if( is_reloadable_with( liquid.typeId() ) ) {
+    // TODO(sm): is_reloadable_with and this function call each other and can recurse for
+    // watertight containers.
+    if( !is_container() && is_reloadable_with( liquid.typeId() ) ) {
         if( ammo_remaining() != 0 && ammo_current() != liquid.typeId() ) {
             return error( string_format( _( "You can't mix loads in your %s." ), tname().c_str() ) );
         }
@@ -5066,9 +5173,11 @@ bool item::allow_crafting_component() const
             return e.is_magazine() || ( e.is_gunmod() && e.has_flag( "IRREMOVABLE" ) );
         } );
 
-    } else {
-        return contents.empty();
     }
+    if( is_filthy() ) {
+        return false;
+    }
+    return contents.empty();
 }
 
 void item::fill_with( item &liquid, long amount )
@@ -5079,11 +5188,13 @@ void item::fill_with( item &liquid, long amount )
         return;
     }
 
-    if( is_reloadable_with( liquid.typeId() ) ) {
+    if( !is_container() ) {
+        if( !is_reloadable_with( liquid.typeId() ) ) {
+            debugmsg( "Tried to fill %s which is not a container and can't be reloaded with %s.",
+                      tname().c_str(), liquid.tname().c_str() );
+            return;
+        }
         ammo_set( liquid.typeId(), ammo_remaining() + amount );
-    } else if( !is_container() ) {
-        debugmsg( "Tried to fill %s which is not a container and can't be reloaded with %s.",
-                  tname().c_str(), liquid.tname().c_str() );
     } else if( !is_container_empty() ) {
         contents.front().mod_charges( amount );
     } else {
@@ -5195,21 +5306,6 @@ const item_category &item::get_category() const
 
     static item_category null_category;
     return type->category ? *type->category : null_category;
-}
-
-bool item_matches_locator(const item &it, const itype_id &id, int)
-{
-    return it.typeId() == id;
-}
-
-bool item_matches_locator(const item &, int locator_pos, int item_pos)
-{
-    return item_pos == locator_pos;
-}
-
-bool item_matches_locator(const item &it, const item *other, int)
-{
-    return &it == other;
 }
 
 iteminfo::iteminfo(std::string Type, std::string Name, std::string Fmt,
@@ -5636,7 +5732,7 @@ bool item::process_tool( player *carrier, const tripoint &pos )
             }
 
             auto revert = type->tool->revert_to; // invoking the object can convert the item to another type
-            type->invoke( carrier != nullptr ? carrier : &g->u, this, pos );
+            type->invoke( carrier != nullptr ? *carrier : g->u, *this, pos );
             if( revert == "null" ) {
                 return true;
             } else {
@@ -5646,7 +5742,7 @@ bool item::process_tool( player *carrier, const tripoint &pos )
         }
     }
 
-    type->tick( carrier != nullptr ? carrier : &g->u, this, pos );
+    type->tick( carrier != nullptr ? *carrier : g->u, *this, pos );
     return false;
 }
 
@@ -5666,7 +5762,7 @@ bool item::process( player *carrier, const tripoint &pos, bool activate )
         }
     }
     if( activate ) {
-        return type->invoke( carrier != nullptr ? carrier : &g->u, this, pos );
+        return type->invoke( carrier != nullptr ? *carrier : g->u, *this, pos );
     }
     // How this works: it checks what kind of processing has to be done
     // (e.g. for food, for drying towels, lit cigars), and if that matches,
@@ -5686,7 +5782,7 @@ bool item::process( player *carrier, const tripoint &pos, bool activate )
     }
 
     if( item_counter == 0 && type->countdown_action ) {
-        type->countdown_action.call( carrier ? carrier : &g->u, this, false, pos );
+        type->countdown_action.call( carrier ? *carrier : g->u, *this, false, pos );
         if( type->countdown_destroy ) {
             return true;
         }
@@ -5839,6 +5935,9 @@ bool item::is_reloadable() const
     } else if( is_bandolier() ) {
         return true;
 
+    } else if( is_container() ) {
+        return true;
+
     } else if( !is_gun() && !is_tool() && !is_magazine() ) {
         return false;
 
@@ -5863,9 +5962,9 @@ std::string item::type_name( unsigned int quantity ) const
                                corpse->nname().c_str(), corpse_name.c_str() );
         }
     } else if( typeId() == "blood" ) {
-        if( corpse == nullptr || corpse->id == mtype_id::NULL_ID ) {
+        if( corpse == nullptr || corpse->id.is_null() ) {
             return string_format( npgettext( "item name", "human blood",
-                                        "human blood", quantity ) );
+                                             "human blood", quantity ) );
         } else {
             return string_format( npgettext( "item name", "%s blood",
                                          "%s blood",  quantity ),
@@ -5986,5 +6085,25 @@ bool item::is_filthy() const
 
 bool item::on_drop( const tripoint &pos )
 {
-    return type->drop_action && type->drop_action.call( &g->u, this, false, pos );
+    return type->drop_action && type->drop_action.call( g->u, *this, false, pos );
+}
+
+time_duration item::age() const
+{
+    return calendar::turn - birthday();
+}
+
+void item::set_age( const time_duration age )
+{
+    set_birthday( time_point( calendar::turn ) - age );
+}
+
+time_point item::birthday() const
+{
+    return bday;
+}
+
+void item::set_birthday( const time_point bday )
+{
+    this->bday = bday;
 }

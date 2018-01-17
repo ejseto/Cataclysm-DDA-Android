@@ -47,17 +47,12 @@ std::set<std::string> ignored_messages;
 
 }
 
-void realDebugmsg( const char *filename, const char *line, const char *funcname, const char *mes,
-                   ... )
+void realDebugmsg( const char *filename, const char *line, const char *funcname,
+                   const std::string &text )
 {
     assert( filename != nullptr );
     assert( line != nullptr );
     assert( funcname != nullptr );
-
-    va_list ap;
-    va_start( ap, mes );
-    const std::string text = vstring_format( mes, ap );
-    va_end( ap );
 
     if( test_mode ) {
         test_dirty = true;
@@ -75,11 +70,11 @@ void realDebugmsg( const char *filename, const char *line, const char *funcname,
     }
 
     if( stdscr == nullptr ) {
-        std::cerr << text.c_str() << std::endl;
+        std::cerr << text << std::endl;
         abort();
     }
 
-    fold_and_print( stdscr, 0, 0, getmaxx( stdscr ), c_ltred,
+    fold_and_print( stdscr, 0, 0, getmaxx( stdscr ), c_light_red,
                     "\n \n" // Looks nicer with some space
                     " DEBUG    : %s\n \n"
                     " FUNCTION : %s\n"
@@ -99,7 +94,7 @@ void realDebugmsg( const char *filename, const char *line, const char *funcname,
             case 'i':
             case 'I':
                 ignored_messages.insert( msg_key );
-            // Falling through
+            /* fallthrough */
             case ' ':
                 stop = true;
                 break;
@@ -360,10 +355,11 @@ std::ofstream &DebugFile::currentTime()
 
 std::ostream &DebugLog( DebugLevel lev, DebugClass cl )
 {
-#if defined(__ANDROID__) && !defined(RELEASE)
+#if defined(__ANDROID__) //&& !defined(RELEASE)
     // Hack: In non-release builds, redirect all debug logging to standard output instead of log file.
-    std::cout << std::endl;
-    return std::cout;
+    //std::cout << std::endl;
+    //return std::cout;
+    return nullStream;
 #endif
 
     // Error are always logged, they are important,

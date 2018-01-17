@@ -3,19 +3,18 @@
 #define WORLDFACTORY_H
 
 #include "cursesdef.h"
-#include "enums.h"
-#include "json.h"
 #include "options.h"
 
 #include <functional>
 #include <map>
-#include <unordered_map>
 #include <vector>
 #include <string>
 #include <memory>
 #include <iosfwd>
 
 class JsonIn;
+class JsonObject;
+enum special_game_id : int;
 
 class save_t
 {
@@ -43,7 +42,7 @@ class save_t
 struct WORLD {
     std::string world_path;
     std::string world_name;
-    std::unordered_map<std::string, options_manager::cOpt> WORLD_OPTIONS;
+    options_manager::options_container WORLD_OPTIONS;
     std::vector<save_t> world_saves;
     /**
      * A (possibly empty) list of (idents of) mods that
@@ -80,17 +79,20 @@ class worldfactory
         // Used for unit tests - does NOT verify if the mods can be loaded
         WORLDPTR make_new_world( const std::vector<std::string> &mods );
         WORLDPTR convert_to_world( std::string origin_path );
+        /// Returns the *existing* world of given name.
+        WORLDPTR get_world( const std::string &name );
+        bool has_world( const std::string &name ) const;
 
         void set_active_world( WORLDPTR world );
         bool save_world( WORLDPTR world = NULL, bool is_conversion = false );
-        std::map<std::string, WORLDPTR> get_all_worlds();
+
+        void init();
 
         WORLDPTR pick_world( bool show_prompt = true );
 
         WORLDPTR active_world;
 
-        std::map<std::string, WORLDPTR> all_worlds;
-        std::vector<std::string> all_worldnames;
+        std::vector<std::string> all_worldnames() const;
 
         mod_manager *get_mod_manager();
 
@@ -103,15 +105,26 @@ class worldfactory
          * @return True if world can't be loaded without Lua support. False otherwise. (When LUA is defined it's allways false).
          */
         bool world_need_lua_build( std::string world_name );
+        /**
+         * @param delete_folder If true: delete all the files and directories  of the given
+         * world folder. Else just avoid deleting the config files and the directory
+         * itself.
+         */
+        void delete_world( const std::string &worldname, bool delete_folder );
+
+        static void draw_worldgen_tabs( WINDOW *win, unsigned int current );
+        void show_active_world_mods( const std::vector<std::string> &world_mods );
+
     protected:
     private:
+        std::map<std::string, WORLDPTR> all_worlds;
+
         std::string pick_random_name();
-        int show_worldgen_tab_options( WINDOW *win, WORLDPTR world );
+        int show_worldgen_tab_options( WINDOW *, WORLDPTR world );
         int show_worldgen_tab_modselection( WINDOW *win, WORLDPTR world );
         int show_worldgen_tab_confirm( WINDOW *win, WORLDPTR world );
 
         void draw_modselection_borders( WINDOW *win, input_context *ctxtp );
-        void draw_worldgen_tabs( WINDOW *win, unsigned int current );
         void draw_mod_list( WINDOW *w, int &start, int &cursor, const std::vector<std::string> &mods,
                             bool is_active_list, const std::string &text_if_empty, WINDOW *w_shift );
 
@@ -125,7 +138,6 @@ class worldfactory
         typedef std::function<int( WINDOW *, WORLDPTR )> worldgen_display;
 
         std::vector<worldgen_display> tabs;
-        std::vector<std::string> tab_strings;
 };
 
 void load_world_option( JsonObject &jo );

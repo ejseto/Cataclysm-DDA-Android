@@ -1,8 +1,7 @@
+#include "damage.h"
 #include "item.h"
 #include "monster.h"
 #include "game.h"
-#include "map.h"
-#include "damage.h"
 #include "rng.h"
 #include "debug.h"
 #include "map_iterator.h"
@@ -233,7 +232,7 @@ const skill_id &skill_by_dt( damage_type dt )
             return skill_stabbing;
 
         default:
-            return skill_id::NULL_ID;
+            return skill_id::NULL_ID();
     }
 }
 

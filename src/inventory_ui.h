@@ -4,6 +4,7 @@
 
 #include <limits>
 #include <memory>
+#include <functional>
 
 #include "color.h"
 #include "cursesdef.h"
@@ -144,10 +145,9 @@ class inventory_selector_preset
         /** Color that will be used to display the entry string. */
         virtual nc_color get_color( const inventory_entry &entry ) const;
 
+        std::string get_denial( const inventory_entry &entry ) const;
         /** Text in the cell */
         std::string get_cell_text( const inventory_entry &entry, size_t cell_index ) const;
-        /** Width of the cell */
-        size_t get_cell_width( const inventory_entry &entry, size_t cell_index ) const;
         /** @return Whether the cell is a stub */
         bool is_stub_cell( const inventory_entry &entry, size_t cell_index ) const;
         /** Number of cells in the preset. */
@@ -172,16 +172,25 @@ class inventory_selector_preset
                           const std::string &stub = std::string() );
 
     private:
-        struct cell_t {
-            std::function<std::string( const inventory_entry & )> func;
-            std::string title;
-            std::string stub;
+        class cell_t
+        {
+            public:
+                cell_t( const std::function<std::string( const inventory_entry & )> &func,
+                        const std::string &title, const std::string &stub ) :
+                    title( title ),
+                    stub( stub ),
+                    func( func ) {}
 
-            cell_t( const std::function<std::string( const inventory_entry & )> &func,
-                    const std::string &title, const std::string &stub ) :
-                func( func ),
-                title( title ),
-                stub( stub ) {}
+
+                std::string get_text( const inventory_entry &entry ) const {
+                    return replace_colors( func( entry ) );
+                }
+
+                std::string title;
+                std::string stub;
+
+            private:
+                std::function<std::string( const inventory_entry & )> func;
         };
 
         std::vector<cell_t> cells;
@@ -226,6 +235,7 @@ class inventory_column
             return page_of( entries.size() + entries_per_page - 1 );
         }
 
+        bool has_available_choices() const;
         bool is_selected( const inventory_entry &entry ) const;
 
         /**
@@ -267,7 +277,7 @@ class inventory_column
         /** Returns next custom inventory letter. */
         long reassign_custom_invlets( const player &p, long min_invlet, long max_invlet );
         /** Reorder entries, repopulate titles, adjust to the new height. */
-        virtual void prepare_paging();
+        virtual void prepare_paging( const std::string &filter = "" );
         /**
          * Event handlers
          */
@@ -287,7 +297,16 @@ class inventory_column
             this->mode = mode;
         }
 
+        void set_filter( const std::string &filter );
+
     protected:
+        struct entry_cell_cache_t {
+            bool assigned = false;
+            nc_color color = c_unset;
+            std::string denial;
+            std::vector<std::string> text;
+        };
+
         /**
          * Change the selection.
          * @param new_index Index of the entry to select.
@@ -315,16 +334,18 @@ class inventory_column
          *  If corresponding cell is not empty (its width is greater than zero),
          *  then a value returned by  inventory_column::get_entry_indent() is added to the result.
          */
+        size_t get_entry_cell_width( size_t index, size_t cell_index ) const;
         size_t get_entry_cell_width( const inventory_entry &entry, size_t cell_index ) const;
         /** Sum of the cell widths */
         size_t get_cells_width() const;
 
-        std::string get_denial( const item_location &loc ) const;
-        std::string get_denial( const inventory_entry &entry ) const;
+        const entry_cell_cache_t make_entry_cell_cache( const inventory_entry &entry ) const;
+        const entry_cell_cache_t &get_entry_cell_cache( size_t index ) const;
 
         const inventory_selector_preset &preset;
 
         std::vector<inventory_entry> entries;
+        std::vector<inventory_entry> entries_unfiltered;
         navigation_mode mode = navigation_mode::ITEM;
         bool active = false;
         bool multiselect = false;
@@ -352,6 +373,7 @@ class inventory_column
         };
 
         std::vector<cell_t> cells;
+        mutable std::vector<entry_cell_cache_t> entries_cell_cache;
 
         /** @return Number of visible cells */
         size_t visible_cells() const;
@@ -370,7 +392,7 @@ class selection_column : public inventory_column
             return false;
         }
 
-        virtual void prepare_paging() override;
+        virtual void prepare_paging( const std::string &filter = "" ) override;
 
         virtual void on_change( const inventory_entry &entry ) override;
         virtual void on_mode_change( navigation_mode ) override {
@@ -452,6 +474,7 @@ class inventory_selector
 
         void resize_window( int width, int height );
         void refresh_window() const;
+        void set_filter();
         void update();
 
         /** Tackles screen overflow */
@@ -537,6 +560,7 @@ class inventory_selector
         inventory_column map_column;         // Column for map and vehicle items
 
         const int border = 1;                // Width of the window border
+        std::string filter;
 
         bool display_stats = true;
         bool layout_is_valid = false;
