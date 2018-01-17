@@ -3,7 +3,7 @@
 # See CPLUSPLUS-SUPPORT.html in the NDK documentation for more information
 APP_STL := c++_shared
 APP_CPPFLAGS += -std=c++11
-APP_LDFLAGS += -fuse-ld=gold
+APP_LDFLAGS += -fuse-ld=gold.exe
 
 # armeabi-v7a covers 98.5%, x86 is 1.5%, armeabi is 0%
 # See http://hwstats.unity3d.com/mobile/cpu.html
