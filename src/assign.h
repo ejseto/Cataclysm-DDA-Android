@@ -12,6 +12,7 @@
 #include "json.h"
 #include "debug.h"
 #include "units.h"
+#include "color.h"
 
 inline void report_strict_violation( JsonObject &jo, const std::string &message,
                                      const std::string &name )
@@ -56,6 +57,32 @@ bool assign( JsonObject &jo, const std::string &name, T &val, bool strict = fals
     }
 
     if( out < lo || out > hi ) {
+        err.throw_error( "value outside supported range", name );
+    }
+
+    if( strict && out == val ) {
+        report_strict_violation( err, "assignment does not update value", name );
+    }
+
+    val = out;
+
+    return true;
+}
+
+// Overload assign specifically for bool to avoid warnings,
+// and also to avoid potentially nonsensical interactions between relative and proportional.
+inline bool assign( JsonObject &jo, const std::string &name, bool &val, bool strict = false )
+{
+    bool out;
+
+    // Object via which to report errors which differs for proportional/relative values
+    JsonObject err = jo;
+
+    if( !jo.read( name, out ) ) {
+        return false;
+    }
+
+    if( out != true && out != false ) {
         err.throw_error( "value outside supported range", name );
     }
 
@@ -226,6 +253,36 @@ inline bool assign( JsonObject &jo, const std::string &name, units::volume &val,
 
     val = out;
 
+    return true;
+}
+
+inline bool assign( JsonObject &jo, const std::string &name, units::mass &val,
+                    bool strict = false,
+                    const units::mass lo = units::mass_min,
+                    const units::mass hi = units::mass_max )
+{
+    auto tmp = val.value();
+    if( !assign( jo, name, tmp, strict, lo.value(), hi.value() ) ) {
+        return false;
+    }
+    val = units::mass{ tmp, units::mass::unit_type{} };
+    return true;
+}
+
+inline bool assign( JsonObject &jo, const std::string &name, nc_color &val,
+                    const bool strict = false )
+{
+    if( !jo.has_member( name ) ) {
+        return false;
+    }
+    const nc_color out = color_from_string( jo.get_string( name ) );
+    if( out == c_unset ) {
+        jo.throw_error( "invalid color name", name );
+    }
+    if( strict && out == val ) {
+        report_strict_violation( jo, "assignment does not update value", name );
+    }
+    val = out;
     return true;
 }
 

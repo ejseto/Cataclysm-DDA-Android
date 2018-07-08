@@ -18,7 +18,7 @@
     <echo>DEBUG=${build.is.packaging.debug}</echo>
     <echo>NDK_DEBUG=${cdda.debug}</echo>
     <echo>FLAGS=${cdda.flags}</echo>
-    <exec executable="${ndk.dir}/ndk-build" failonerror="true"> 
+    <exec executable="${ndk.dir}/ndk-build.cmd" failonerror="true"> 
         <arg value="-j${cdda.jobs}" />
         <arg value="V=1" />
         <arg value="NDK_DEBUG=${cdda.debug} " />
@@ -27,7 +27,7 @@
 </target>
 
 <target name="clean" depends="android_rules.clean">
-    <exec executable="${ndk.dir}/ndk-build" failonerror="true">
+    <exec executable="${ndk.dir}/ndk-build.cmd" failonerror="true">
         <arg value="clean"/>
     </exec>
 </target>

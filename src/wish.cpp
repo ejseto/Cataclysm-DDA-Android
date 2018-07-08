@@ -1,7 +1,7 @@
 #include "game.h"
 #include "map.h"
 #include "debug.h"
-#include "output.h"
+#include "string_formatter.h"
 #include "item_factory.h"
 #include "uistate.h"
 #include "monstergenerator.h"
@@ -36,7 +36,7 @@ class wish_mutate_callback: public uimenu_callback
             if( pTraits[ m ] == true ) {
                 return c_green;
             }
-            return c_ltgray;
+            return c_light_gray;
         }
 
         wish_mutate_callback() : msg( "" ) {
@@ -45,7 +45,7 @@ class wish_mutate_callback: public uimenu_callback
             vTraits.clear();
             pTraits.clear();
         }
-        bool key( const input_event &event, int entnum, uimenu *menu ) override {
+        bool key( const input_context &, const input_event &event, int entnum, uimenu *menu ) override {
             if( event.get_first_input() == 't' && p->has_trait( vTraits[ entnum ] ) ) {
                 if( p->has_base_trait( vTraits[ entnum ] ) ) {
                     p->toggle_trait( vTraits[ entnum ] );
@@ -85,7 +85,7 @@ class wish_mutate_callback: public uimenu_callback
 
             if( !mdata.prereqs.empty() ) {
                 line2++;
-                mvwprintz( menu->window, line2, startx, c_ltgray, _( "Prereqs:" ) );
+                mvwprintz( menu->window, line2, startx, c_light_gray, _( "Prereqs:" ) );
                 for( auto &j : mdata.prereqs ) {
                     mvwprintz( menu->window, line2, startx + 11, mcolor( j ), "%s",
                                mutation_branch::get_name( j ).c_str() );
@@ -95,7 +95,7 @@ class wish_mutate_callback: public uimenu_callback
 
             if( !mdata.prereqs2.empty() ) {
                 line2++;
-                mvwprintz( menu->window, line2, startx, c_ltgray, _( "Prereqs, 2d:" ) );
+                mvwprintz( menu->window, line2, startx, c_light_gray, _( "Prereqs, 2d:" ) );
                 for( auto &j : mdata.prereqs2 ) {
                     mvwprintz( menu->window, line2, startx + 15, mcolor( j ), "%s",
                                mutation_branch::get_name( j ).c_str() );
@@ -105,7 +105,7 @@ class wish_mutate_callback: public uimenu_callback
 
             if( !mdata.threshreq.empty() ) {
                 line2++;
-                mvwprintz( menu->window, line2, startx, c_ltgray, _( "Thresholds required:" ) );
+                mvwprintz( menu->window, line2, startx, c_light_gray, _( "Thresholds required:" ) );
                 for( auto &j : mdata.threshreq ) {
                     mvwprintz( menu->window, line2, startx + 21, mcolor( j ), "%s",
                                mutation_branch::get_name( j ).c_str() );
@@ -115,7 +115,7 @@ class wish_mutate_callback: public uimenu_callback
 
             if( !mdata.cancels.empty() ) {
                 line2++;
-                mvwprintz( menu->window, line2, startx, c_ltgray, _( "Cancels:" ) );
+                mvwprintz( menu->window, line2, startx, c_light_gray, _( "Cancels:" ) );
                 for( auto &j : mdata.cancels ) {
                     mvwprintz( menu->window, line2, startx + 11, mcolor( j ), "%s",
                                mutation_branch::get_name( j ).c_str() );
@@ -125,7 +125,7 @@ class wish_mutate_callback: public uimenu_callback
 
             if( !mdata.replacements.empty() ) {
                 line2++;
-                mvwprintz( menu->window, line2, startx, c_ltgray, _( "Becomes:" ) );
+                mvwprintz( menu->window, line2, startx, c_light_gray, _( "Becomes:" ) );
                 for( auto &j : mdata.replacements ) {
                     mvwprintz( menu->window, line2, startx + 11, mcolor( j ), "%s",
                                mutation_branch::get_name( j ).c_str() );
@@ -135,7 +135,7 @@ class wish_mutate_callback: public uimenu_callback
 
             if( !mdata.additions.empty() ) {
                 line2++;
-                mvwprintz( menu->window, line2, startx, c_ltgray, _( "Add-ons:" ) );
+                mvwprintz( menu->window, line2, startx, c_light_gray, _( "Add-ons:" ) );
                 for( auto &j : mdata.additions ) {
                     mvwprintz( menu->window, line2, startx + 11, mcolor( j ), "%s",
                                mutation_branch::get_name( j ).c_str() );
@@ -145,7 +145,7 @@ class wish_mutate_callback: public uimenu_callback
 
             if( !mdata.category.empty() ) {
                 line2++;
-                mvwprintz( menu->window, line2, startx, c_ltgray,  _( "Category:" ) );
+                mvwprintz( menu->window, line2, startx, c_light_gray,  _( "Category:" ) );
                 for( auto &j : mdata.category ) {
                     mvwprintw( menu->window, line2, startx + 11, "%s", j.c_str() );
                     line2++;
@@ -153,7 +153,7 @@ class wish_mutate_callback: public uimenu_callback
             }
             line2 += 2;
 
-            mvwprintz( menu->window, line2, startx, c_ltgray, "pts: %d vis: %d ugly: %d",
+            mvwprintz( menu->window, line2, startx, c_light_gray, "pts: %d vis: %d ugly: %d",
                        mdata.points,
                        mdata.visibility,
                        mdata.ugliness
@@ -163,14 +163,16 @@ class wish_mutate_callback: public uimenu_callback
             std::vector<std::string> desc = foldstring( mdata.description,
                                             menu->pad_right - 1 );
             for( auto &elem : desc ) {
-                mvwprintz( menu->window, line2, startx, c_ltgray, "%s", elem.c_str() );
+                mvwprintz( menu->window, line2, startx, c_light_gray, "%s", elem.c_str() );
                 line2++;
             }
             lastlen = line2 + 1;
 
             mvwprintz( menu->window, menu->w_height - 3, startx, c_green, "%s", msg.c_str() );
             msg = padding;
-            mvwprintw( menu->window, menu->w_height - 2, startx, _( "[/] find, [q]uit" ) );
+            input_context ctxt( "UIMENU" );
+            mvwprintw( menu->window, menu->w_height - 2, startx, _( "[%s] find, [%s] quit" ),
+                       ctxt.get_desc( "FILTER" ).c_str(), ctxt.get_desc( "QUIT" ).c_str() );
 
         };
 
@@ -187,7 +189,7 @@ void debug_menu::wishmutate( player *p )
         wmenu.addentry( -1, true, -2, "%s", traits_iter.second.name.c_str() );
         wmenu.entries[ c ].extratxt.left = 1;
         wmenu.entries[ c ].extratxt.txt = "";
-        wmenu.entries[ c ].extratxt.color = c_ltgreen;
+        wmenu.entries[ c ].extratxt.color = c_light_green;
         if( p->has_trait( traits_iter.first ) ) {
             wmenu.entries[ c ].text_color = c_green;
             if( p->has_base_trait( traits_iter.first ) ) {
@@ -255,7 +257,7 @@ void debug_menu::wishmutate( player *p )
                 }
             }
         }
-    } while( wmenu.keypress != 'q' && wmenu.keypress != KEY_ESCAPE && wmenu.keypress != ' ' );
+    } while( wmenu.ret >= 0 );
 }
 
 class wish_monster_callback: public uimenu_callback
@@ -283,14 +285,14 @@ class wish_monster_callback: public uimenu_callback
         }
 
         void setup( uimenu *menu ) {
-            w_info = newwin( menu->w_height - 2, menu->pad_right, 1,
-                             menu->w_x + menu->w_width - 1 - menu->pad_right );
+            w_info = catacurses::newwin( menu->w_height - 2, menu->pad_right, 1,
+                                         menu->w_x + menu->w_width - 1 - menu->pad_right );
             padding = std::string( getmaxx( w_info ), ' ' );
             werase( w_info );
             wrefresh( w_info );
         }
 
-        bool key( const input_event &event, int entnum, uimenu *menu ) override {
+        bool key( const input_context &, const input_event &event, int entnum, uimenu *menu ) override {
             ( void )entnum; // unused
             ( void )menu; // unused
             if( event.get_first_input() == 'f' ) {
@@ -334,8 +336,10 @@ class wish_monster_callback: public uimenu_callback
 
             mvwprintz( w_info, getmaxy( w_info ) - 3, 0, c_green, "%s", msg.c_str() );
             msg = padding;
+            input_context ctxt( "UIMENU" );
             mvwprintw( w_info, getmaxy( w_info ) - 2, 0,
-                       _( "[/] find, [f]riendly, [h]allucination, [i]ncrease group, [d]ecrease group, [q]uit" ) );
+                       _( "[%s] find, [f]riendly, [h]allucination, [i]ncrease group, [d]ecrease group, [%s] quit" ),
+                       ctxt.get_desc( "FILTER" ).c_str(), ctxt.get_desc( "QUIT" ).c_str() );
         }
 
         void refresh( uimenu *menu ) override {
@@ -395,13 +399,14 @@ void debug_menu::wishmonster( const tripoint &p )
                         g->add_zombie( mon, true );
                     }
                 }
-                cb.msg = string_format( _( "Spawned %d/%d monsters, choose another or 'q' to quit." ),
-                                        num_spawned, int( spawn_points.size() ) );
+                input_context ctxt( "UIMENU" );
+                cb.msg = string_format( _( "Spawned %d/%d monsters, choose another or [%s] to quit." ),
+                                        num_spawned, int( spawn_points.size() ), ctxt.get_desc( "QUIT" ).c_str() );
                 uistate.wishmonster_selected = wmenu.ret;
                 wmenu.redraw();
             }
         }
-    } while( wmenu.keypress != 'q' && wmenu.keypress != KEY_ESCAPE && wmenu.keypress != ' ' );
+    } while( wmenu.ret >= 0 );
 }
 
 class wish_item_callback: public uimenu_callback
@@ -413,7 +418,8 @@ class wish_item_callback: public uimenu_callback
         wish_item_callback( const std::vector<const itype *> &ids ) :
             incontainer( false ), msg( "" ), standard_itype_ids( ids ) {
         }
-        bool key( const input_event &event, int /*entnum*/, uimenu * /*menu*/ ) override {
+        bool key( const input_context &, const input_event &event, int /*entnum*/,
+                  uimenu * /*menu*/ ) override {
             if( event.get_first_input() == 'f' ) {
                 incontainer = !incontainer;
                 return true;
@@ -436,12 +442,14 @@ class wish_item_callback: public uimenu_callback
             mvwprintz( menu->window, 1, startx + ( menu->pad_right - 1 - header.size() ) / 2, c_cyan, "%s",
                        header.c_str() );
 
-            fold_and_print( menu->window, starty, startx, menu->pad_right - 1, c_ltgray, tmp.info( true ) );
+            fold_and_print( menu->window, starty, startx, menu->pad_right - 1, c_light_gray, tmp.info( true ) );
 
             mvwprintz( menu->window, menu->w_height - 3, startx, c_green, "%s", msg.c_str() );
             msg.erase();
 
-            mvwprintw( menu->window, menu->w_height - 2, startx, _( "[/] find, [f] container, [q]uit" ) );
+            input_context ctxt( "UIMENU" );
+            mvwprintw( menu->window, menu->w_height - 2, startx, _( "[%s] find, [f] container, [%s] quit" ),
+                       ctxt.get_desc( "FILTER" ).c_str(), ctxt.get_desc( "QUIT" ).c_str() );
         }
 };
 
@@ -476,36 +484,42 @@ void debug_menu::wishitem( player *p, int x, int y, int z )
         wmenu.query();
         if( wmenu.ret >= 0 ) {
             item granted( opts[wmenu.ret] );
+            if( cb.incontainer ) {
+                granted = granted.in_its_container();
+            }
             prev_amount = amount;
+            bool canceled = false;
             if( p != NULL ) {
-                string_input_popup()
+                string_input_popup popup;
+                popup
                 .title( _( "How many?" ) )
                 .width( 20 )
                 .description( granted.tname() )
                 .edit( amount );
+                canceled = popup.canceled();
             }
-            if( dynamic_cast<wish_item_callback *>( wmenu.callback )->incontainer ) {
-                granted = granted.in_its_container();
-            }
-            if( p != NULL ) {
-                for( int i = 0; i < amount; i++ ) {
-                    p->i_add( granted );
+            if( !canceled ) {
+                if( p != NULL ) {
+                    for( int i = 0; i < amount; i++ ) {
+                        p->i_add( granted );
+                    }
+                    p->invalidate_crafting_inventory();
+                } else if( x >= 0 && y >= 0 ) {
+                    g->m.add_item_or_charges( tripoint( x, y, z ), granted );
+                    wmenu.ret = -1;
                 }
-                p->invalidate_crafting_inventory();
-            } else if( x >= 0 && y >= 0 ) {
-                g->m.add_item_or_charges( tripoint( x, y, z ), granted );
-                wmenu.keypress = 'q';
-            }
-            if( amount > 0 ) {
-                dynamic_cast<wish_item_callback *>( wmenu.callback )->msg =
-                    _( "Wish granted. Wish for more or hit 'q' to quit." );
+                if( amount > 0 ) {
+                    input_context ctxt( "UIMENU" );
+                    cb.msg = string_format( _( "Wish granted. Wish for more or hit [%s] to quit." ),
+                                            ctxt.get_desc( "QUIT" ).c_str() );
+                }
             }
             uistate.wishitem_selected = wmenu.ret;
-            if( !amount ) {
+            if( canceled || amount <= 0 ) {
                 amount = prev_amount;
             }
         }
-    } while( wmenu.keypress != 'q' && wmenu.keypress != KEY_ESCAPE && wmenu.keypress != ' ' );
+    } while( wmenu.ret >= 0 );
 }
 
 /*
@@ -549,7 +563,7 @@ void debug_menu::wishskill( player *p )
             sksetmenu.w_x = skmenu.w_x + skmenu.w_width + 1;
             sksetmenu.w_y = std::max( 0, skmenu.w_y + ( skmenu.w_height - sksetmenu.w_height ) / 2 );
             sksetmenu.return_invalid = true;
-            sksetmenu.settext( _( "Set '%s' to.." ), Skill::skills[skill_id].name().c_str() );
+            sksetmenu.settext( string_format( _( "Set '%s' to.." ), Skill::skills[skill_id].name().c_str() ) );
             int skcur = ( int )p->get_skill_level( Skill::skills[skill_id].ident() );
             sksetmenu.selected = skcur;
             for( int i = 0; i < NUM_SKILL_LVL; i++ ) {
@@ -595,6 +609,5 @@ void debug_menu::wishskill( player *p )
                 }
             }
         }
-    } while( skmenu.ret != -1 && ( skmenu.keypress != 'q' && skmenu.keypress != ' ' &&
-                                   skmenu.keypress != KEY_ESCAPE ) );
+    } while( skmenu.ret >= 0 );
 }

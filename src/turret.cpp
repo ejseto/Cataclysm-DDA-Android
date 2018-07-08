@@ -4,6 +4,7 @@
 #include "player.h"
 #include "item.h"
 #include "itype.h"
+#include "string_formatter.h"
 #include "veh_type.h"
 #include "vehicle_selector.h"
 #include "npc.h"
@@ -403,7 +404,6 @@ bool vehicle::turrets_aim( bool manual, bool automatic, vehicle_part *tur_part )
         return std::max( lhs, res );
     } );
 
-    tripoint pos = g->u.pos();
     std::vector<tripoint> trajectory;
     trajectory = target_handler().target_ui( g->u, TARGET_MODE_TURRET, nullptr, range );
 
@@ -490,9 +490,11 @@ npc vehicle::get_targeting_npc( vehicle_part &pt )
     cpu.name = string_format( pgettext( "vehicle turret", "The %s" ), pt.name().c_str() );
     // turrets are subject only to recoil_vehicle()
     cpu.recoil = 0;
+
     // These might all be affected by vehicle part damage, weather effects, etc.
-    cpu.set_skill_level( turret_query( pt ).base()->gun_skill(), 8 );
+    cpu.set_skill_level( pt.get_base().gun_skill(), 8 );
     cpu.set_skill_level( skill_id( "gun" ), 4 );
+
     cpu.str_cur = 16;
     cpu.dex_cur = 8;
     cpu.per_cur = 12;
@@ -505,9 +507,6 @@ npc vehicle::get_targeting_npc( vehicle_part &pt )
 int vehicle::automatic_fire_turret( vehicle_part &pt )
 {
     turret_data gun = turret_query( pt );
-    if( gun.query() != turret_data::status::ready ) {
-        return 0;
-    }
 
     int shots = 0;
 

@@ -3,6 +3,7 @@
 #include "itype.h"
 #include "generic_factory.h"
 #include "item_factory.h"
+#include "item.h"
 #include "init.h"
 #include "cata_utility.h"
 #include "crafting.h"
@@ -215,8 +216,10 @@ void recipe_dictionary::finalize()
         auto &r = e.second;
 
         for( const auto &bk : r.booksets ) {
-            islot_book::recipe_with_description_t desc{ &r, bk.second, item::nname( r.result ), false };
-            item::find_type( bk.first )->book->recipes.insert( desc );
+            const itype *booktype = item::find_type( bk.first );
+            int req = bk.second > 0 ? bk.second : std::max( booktype->book->req, r.difficulty );
+            islot_book::recipe_with_description_t desc{ &r, req, item::nname( r.result ), false };
+            booktype->book->recipes.insert( desc );
         }
 
         // if reversible and no specific uncraft recipe exists use this recipe

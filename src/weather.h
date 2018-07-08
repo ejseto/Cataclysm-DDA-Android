@@ -2,6 +2,8 @@
 #ifndef WEATHER_H
 #define WEATHER_H
 
+#include "color.h"
+
 /**
  * @name BODYTEMP
  * Body temperature.
@@ -36,7 +38,10 @@ class item;
 struct point;
 struct tripoint;
 struct trap;
-typedef int nc_color;
+template<typename T>
+class int_id;
+struct oter_t;
+using oter_id = int_id<oter_t>;
 
 /**
  * Weather type enum.
@@ -123,7 +128,7 @@ struct weather_sum {
 
 const std::string season_name( int season );
 const std::string season_name_upper( int season );
-weather_datum const &weather_data( weather_type type );
+weather_datum const weather_data( weather_type const type );
 
 std::string weather_forecast( point const &abs_sm_pos );
 
@@ -139,7 +144,7 @@ std::string print_pressure( double pressure, int decimals = 0 );
 
 int get_local_windchill( double temperature, double humidity, double windpower );
 int get_local_humidity( double humidity, weather_type weather, bool sheltered = false );
-int get_local_windpower( double windpower, std::string const &omtername = "no name",
+int get_local_windpower( double windpower, const oter_id &omter,
                          bool sheltered = false );
 
 weather_sum sum_conditions( const calendar &startturn,

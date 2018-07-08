@@ -214,10 +214,6 @@ generic_factory<mission_type> mission_type_factory( "mission_type" );
 
 /** @relates string_id */
 template<>
-const mission_type_id string_id<mission_type>::NULL_ID( "MISSION_NULL" );
-
-/** @relates string_id */
-template<>
 const mission_type &string_id<mission_type>::obj() const
 {
     return mission_type_factory.obj( *this );
@@ -257,7 +253,7 @@ void mission_type::load( JsonObject &jo, const std::string &src )
 {
     const bool strict = src == "dda";
 
-    mandatory( jo, was_loaded, "name", name, translated_string_reader );
+    mandatory( jo, was_loaded, "name", name );
 
     mandatory( jo, was_loaded, "difficulty", difficulty );
     mandatory( jo, was_loaded, "value", value );
@@ -438,5 +434,5 @@ mission_type_id mission_type::get_random_id( const mission_origin origin, const 
             valid.push_back( t.id );
         }
     }
-    return random_entry( valid, mission_type_id::NULL_ID );
+    return random_entry( valid, mission_type_id::NULL_ID() );
 }

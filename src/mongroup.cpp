@@ -1,9 +1,8 @@
+#include "mongroup.h"
 #include <vector>
 
 #include "rng.h"
-#include "mongroup.h"
 #include "game.h"
-#include "map.h"
 #include "debug.h"
 #include "options.h"
 #include "monstergenerator.h"
@@ -169,7 +168,7 @@ MonsterGroupResult MonsterGroupManager::GetResultFromGroup(
                 //And if a quantity pointer with remaining value was passed, will modify the external value as a side effect
                 //We will reduce it by the spawn rule's cost multiplier
                 if(quantity) {
-                    *quantity -= it->cost_multiplier * spawn_details.pack_size;
+                    *quantity -= std::max( 1, it->cost_multiplier * spawn_details.pack_size );
                 }
                 monster_found = true;
                 //Otherwise, subtract the frequency from spawn result for the next loop around
@@ -177,6 +176,11 @@ MonsterGroupResult MonsterGroupManager::GetResultFromGroup(
                 spawn_chance -= it->frequency;
             }
         }
+    }
+
+    // Force quantity to decrement regardless of whether we found a monster.
+    if( quantity && !monster_found ) {
+        (*quantity)--;
     }
 
     return spawn_details;
@@ -207,7 +211,7 @@ const mongroup_id& MonsterGroupManager::Monster2Group( const mtype_id& monster )
             return g.second.name;
         }
     }
-    return mongroup_id::NULL_ID;
+    return mongroup_id::NULL_ID();
 }
 
 std::vector<mtype_id> MonsterGroupManager::GetMonstersFromGroup(const mongroup_id& group)
@@ -238,7 +242,7 @@ const MonsterGroup& MonsterGroupManager::GetMonsterGroup(const mongroup_id& grou
         // but it prevents further messages about invalid monster type id
         auto &g = monsterGroupMap[group];
         g.name = group;
-        g.defaultMonster = mtype_id::NULL_ID;
+        g.defaultMonster = mtype_id::NULL_ID();
         return g;
     } else {
         return it->second;
@@ -309,7 +313,7 @@ void MonsterGroupManager::FinalizeMonsterGroups()
             }
         }
         if(MonsterGroupManager::monster_is_blacklisted( mg.defaultMonster )) {
-            mg.defaultMonster = mtype_id::NULL_ID;
+            mg.defaultMonster = mtype_id::NULL_ID();
         }
     }
 }
@@ -368,7 +372,7 @@ void MonsterGroupManager::LoadMonsterGroup(JsonObject &jo)
         }
     }
     g.replace_monster_group = jo.get_bool("replace_monster_group", false);
-    g.new_monster_group = mongroup_id( jo.get_string("new_monster_group_id", mongroup_id::NULL_ID.str() ) );
+    g.new_monster_group = mongroup_id( jo.get_string("new_monster_group_id", mongroup_id::NULL_ID().str() ) );
     g.monster_group_time = jo.get_int("replacement_time", 0);
     g.is_safe = jo.get_bool( "is_safe", false );
 

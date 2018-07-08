@@ -4,6 +4,9 @@
 
 #include "player_activity.h"
 
+#include <functional>
+#include <map>
+
 class player;
 
 // activity_item_handling.cpp
@@ -41,6 +44,7 @@ void atm_do_turn( player_activity *act, player *p );
 void cracking_do_turn( player_activity *act, player *p );
 void repair_item_do_turn( player_activity *act, player *p );
 void butcher_do_turn( player_activity *act, player *p );
+void hacksaw_do_turn( player_activity *act, player *p );
 
 // defined in activity_handlers.cpp
 extern const std::map< activity_id, std::function<void( player_activity *, player * )> >
@@ -68,6 +72,7 @@ void open_gate_finish( player_activity *act, player * );
 void repair_item_finish( player_activity *act, player *p );
 void mend_item_finish( player_activity *act, player *p );
 void gunmod_add_finish( player_activity *act, player *p );
+void toolmod_add_finish( player_activity *act, player *p );
 void clear_rubble_finish( player_activity *act, player *p );
 void meditate_finish( player_activity *act, player *p );
 void read_finish( player_activity *act, player *p );
@@ -82,6 +87,8 @@ void vibe_finish( player_activity *act, player *p );
 void move_items_finish( player_activity *act, player *p );
 void atm_finish( player_activity *act, player *p );
 void aim_finish( player_activity *act, player *p );
+void washing_finish( player_activity *act, player *p );
+void hacksaw_finish( player_activity *act, player *p );
 
 // defined in activity_handlers.cpp
 extern const std::map< activity_id, std::function<void( player_activity *, player * )> >

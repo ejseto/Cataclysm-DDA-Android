@@ -10,10 +10,9 @@
 #include "bodypart.h" // body_part::num_bp
 #include "string_id.h"
 #include "explosion.h"
-#include "vitamin.h"
-#include "emit.h"
 #include "units.h"
 #include "damage.h"
+#include "translations.h"
 
 #include <string>
 #include <vector>
@@ -22,21 +21,21 @@
 #include <bitset>
 #include <memory>
 
-#ifndef gettext_noop
-#define gettext_noop(x) x
-#endif
-
 // see item.h
 class item_category;
 class Item_factory;
 class recipe;
-
+class emit;
+using emit_id = string_id<emit>;
 struct itype;
 class Skill;
 using skill_id = string_id<Skill>;
-extern template const string_id<Skill> string_id<Skill>::NULL_ID;
+struct bionic_data;
+using bionic_id = string_id<bionic_data>;
 class player;
 class item;
+class vitamin;
+using vitamin_id = string_id<vitamin>;
 class ma_technique;
 using matec_id = string_id<ma_technique>;
 enum art_effect_active : int;
@@ -47,18 +46,12 @@ using material_id = string_id<material_type>;
 typedef std::string itype_id;
 class ammunition_type;
 using ammotype = string_id<ammunition_type>;
-extern template const string_id<ammunition_type> string_id<ammunition_type>::NULL_ID;
 class fault;
 using fault_id = string_id<fault>;
 struct quality;
 using quality_id = string_id<quality>;
 
 enum field_id : int;
-
-// Returns the name of a category of ammo (e.g. "shot")
-std::string ammo_name( const ammotype &ammo );
-// Returns the default ammo for a category of ammo (e.g. ""00_shot"")
-const itype_id &default_ammo( const ammotype &ammo );
 
 class gunmod_location
 {
@@ -85,7 +78,7 @@ class gunmod_location
 };
 
 struct islot_tool {
-    ammotype ammo_id = ammotype::NULL_ID;
+    ammotype ammo_id = ammotype::NULL_ID();
 
     itype_id revert_to = "null";
     std::string revert_msg;
@@ -225,7 +218,7 @@ struct islot_book {
     /**
      * Which skill it upgrades, if any. Can be @ref skill_id::NULL_ID.
      */
-    skill_id skill = skill_id::NULL_ID;
+    skill_id skill = skill_id::NULL_ID();
     /**
      * The skill level the book provides.
      */
@@ -289,7 +282,7 @@ struct islot_mod {
     std::set<ammotype> acceptable_ammo;
 
     /** If set modifies parent ammo to this type */
-    ammotype ammo_modifier = ammotype::NULL_ID;
+    ammotype ammo_modifier = ammotype::NULL_ID();
 
     /** If non-empty replaces the compatible magazines for the parent item */
     std::map< ammotype, std::set<itype_id> > magazine_adaptor;
@@ -358,11 +351,11 @@ struct islot_gun : common_ranged_data {
     /**
      * What skill this gun uses.
      */
-    skill_id skill_used = skill_id::NULL_ID;
+    skill_id skill_used = skill_id::NULL_ID();
     /**
      * What type of ammo this gun uses.
      */
-    ammotype ammo = ammotype::NULL_ID;
+    ammotype ammo = ammotype::NULL_ID();
     /**
      * Gun durability, affects gun being damaged during shooting.
      */
@@ -378,7 +371,7 @@ struct islot_gun : common_ranged_data {
     /**
      * Noise displayed when reloading the weapon.
      */
-    std::string reload_noise = gettext_noop( "click." );
+    std::string reload_noise = translate_marker( "click." );
     /**
      * Volume of the noise made when reloading this weapon.
      */
@@ -433,19 +426,40 @@ struct islot_gun : common_ranged_data {
     int recoil = 0;
 };
 
+/// The type of gun. The second "_type" suffix is only to distinguish it from `item::gun_type`.
+class gun_type_type
+{
+    private:
+        std::string name_;
+
+    public:
+        /// @param name The untranslated name of the gun type. Must have been extracted
+        /// for translation with the context "gun_type_type".
+        gun_type_type( const std::string &name ) : name_( name ) {}
+        // arbitrary sorting, only here to allow usage in std::set
+        bool operator<( const gun_type_type &rhs ) const {
+            return name_ < rhs.name_;
+        }
+        /// Translated name.
+        std::string name() const;
+};
+
 struct islot_gunmod : common_ranged_data {
     /** Where is this guunmod installed (eg. "stock", "rail")? */
     gunmod_location location;
 
     /** What kind of weapons can this gunmod be used with (eg. "rifle", "crossbow")? */
-    std::set<std::string> usable;
+    std::set<gun_type_type> usable;
 
-    /** @todo add documentation */
+    /** If this value is set (non-negative), this gunmod functions as a sight. A sight is only usable to aim by a character whose current @ref Character::recoil is at or below this value. */
     int sight_dispersion = -1;
 
     /**
-     *  If set (non-zero) mod functions as sight when recoil above mod @ref sight_dispersion */
-    int aim_cost = 0;
+     *  For sights (see @ref sight_dispersion), this value affects time cost of aiming.
+     *  Higher is better. In case of multiple usable sights,
+     *  the one with highest aim speed is used.
+     */
+    int aim_speed = -1;
 
     /** Modifies base loudness as provided by the currently loaded ammo */
     int loudness = 0;
@@ -459,13 +473,15 @@ struct islot_gunmod : common_ranged_data {
     /** Firing modes added to or replacing those of the base gun */
     std::map<std::string, std::tuple<std::string, int, std::set<std::string>>> mode_modifier;
 
+    std::set<std::string> ammo_effects;
+
     /** Relative adjustment to base gun handling */
     int handling = 0;
 };
 
 struct islot_magazine {
     /** What type of ammo this magazine can be loaded with */
-    ammotype type = ammotype::NULL_ID;
+    ammotype type = ammotype::NULL_ID();
 
     /** Capacity of magazine (in equivalent units to ammo charges) */
     int capacity = 0;
@@ -552,7 +568,7 @@ struct islot_bionic {
     /**
      * Id of the bionic, see bionics.cpp for its usage.
      */
-    std::string bionic_id;
+    bionic_id id;
 };
 
 struct islot_seed {
@@ -688,7 +704,7 @@ public:
 
     /** After loading from JSON these properties guaranteed to be zero or positive */
     /*@{*/
-    int weight          =  0; // Weight in grams for item (or each stack member)
+    units::mass weight  =  0; // Weight for item ( or each stack member )
     units::volume volume = 0; // Space occupied by items of this type
     int price           =  0; // Value before cataclysm
     int price_post      = -1; // Value after cataclysm (dependent upon practical usages)
@@ -792,9 +808,9 @@ public:
     const use_function *get_use( const std::string &iuse_name ) const;
 
     // Here "invoke" means "actively use". "Tick" means "active item working"
-    long invoke( player *p, item *it, const tripoint &pos ) const; // Picks first method or returns 0
-    long invoke( player *p, item *it, const tripoint &pos, const std::string &iuse_name ) const;
-    long tick( player *p, item *it, const tripoint &pos ) const;
+    long invoke( player &p, item &it, const tripoint &pos ) const; // Picks first method or returns 0
+    long invoke( player &p, item &it, const tripoint &pos, const std::string &iuse_name ) const;
+    long tick( player &p, item &it, const tripoint &pos ) const;
 
     virtual ~itype() { };
 };

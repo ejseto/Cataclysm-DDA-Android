@@ -4,7 +4,7 @@
     "type": "AMMO",
     "name": "7.62x25mm JHP",
     "description": "A commercial version of the 7.62x25mm cartridge created for the armed forces of Soviet Russia.  It was derived from the 7.63x25mm cartridge used by the C96 pistol.",
-    "weight": 9,
+    "weight": 10,
     "volume": 1,
     "price": 3000,
     "material": [ "brass", "powder" ],
@@ -56,7 +56,7 @@
     "id": "reloaded_762_25",
     "copy-from": "762_25hot",
     "type": "AMMO",
-    "name": "reloaded 7.62x25",
+    "name": "reloaded 7.62x25mm",
     "proportional": {
       "price": 0.7,
       "damage": 0.9,

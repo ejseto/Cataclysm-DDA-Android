@@ -10,6 +10,7 @@
 #include "sounds.h"
 #include "options.h"
 #include "mapdata.h"
+#include "string_formatter.h"
 #include "debug.h"
 #include "field.h"
 #include "vitamin.h"
@@ -407,11 +408,6 @@ void player::activate_mutation( const trait_id &mut )
     if( mut == trait_WEB_WEAVER ) {
         g->m.add_field(pos(), fd_web, 1, 0);
         add_msg_if_player(_("You start spinning web with your spinnerets!"));
-    } else if( mut == "WEB_ROPE" ) {
-        add_msg_if_player(_("You spin a rope from your silk."));
-        item rope( "rope_30" );
-        i_add_or_drop( rope );
-        tdata.powered = false;
     } else if (mut == "BURROW"){
         if( is_underwater() ) {
             add_msg_if_player(m_info, _("You can't do that while underwater."));
@@ -470,8 +466,7 @@ void player::activate_mutation( const trait_id &mut )
         int numslime = 1;
         for (int i = 0; i < numslime && !valid.empty(); i++) {
             const tripoint target = random_entry_removed( valid );
-            if (g->summon_mon(mtype_id( "mon_player_blob" ), target)) {
-                monster *slime = g->monster_at( target );
+            if( monster * const slime = g->summon_mon( mtype_id( "mon_player_blob" ), target ) ) {
                 slime->friendly = -1;
             }
         }
@@ -499,23 +494,14 @@ void player::activate_mutation( const trait_id &mut )
         blossoms();
         tdata.powered = false;
         return;
-    } else if (mut == "VINES3"){
-        item newit( "vine_30", calendar::turn );
-        if ( !can_pickVolume( newit ) ) { //Accounts for result_mult
-            add_msg_if_player(_("You detach a vine but don't have room to carry it, so you drop it."));
-            g->m.add_item_or_charges(pos(), newit);
-        } else if ( !can_pickWeight( newit, !get_option<bool>( "DANGEROUS_PICKUPS" ) ) ) {
-            add_msg_if_player(_("Your freshly-detached vine is too heavy to carry, so you drop it."));
-            g->m.add_item_or_charges(pos(), newit);
-        } else {
-            inv.assign_empty_invlet(newit);
-            newit = i_add(newit);
-            add_msg_if_player(m_info, "%c - %s", newit.invlet == 0 ? ' ' : newit.invlet, newit.tname().c_str());
-        }
-        tdata.powered = false;
-        return;
     } else if( mut == trait_SELFAWARE ) {
         print_health();
+        tdata.powered = false;
+        return;
+    } else if( !mdata.spawn_item.empty() ) {
+        item tmpitem( mdata.spawn_item );
+        i_add_or_drop( tmpitem );
+        add_msg_if_player( _( mdata.spawn_item_message.c_str() ) );
         tdata.powered = false;
         return;
     }
@@ -530,34 +516,6 @@ void player::deactivate_mutation( const trait_id &mut )
     recalc_sight_limits();
 }
 
-void show_mutations_titlebar(WINDOW *window, player *p, std::string menu_mode)
-{
-    werase(window);
-
-    std::string caption = _("MUTATIONS -");
-    int cap_offset = utf8_width(caption) + 1;
-    mvwprintz(window, 0,  0, c_blue, "%s", caption.c_str());
-
-    std::stringstream pwr;
-    pwr << string_format(_("Power: %d/%d"), int(p->power_level), int(p->max_power_level));
-    int pwr_length = utf8_width(pwr.str()) + 1;
-
-    std::string desc;
-    int desc_length = getmaxx(window) - cap_offset - pwr_length;
-
-    if(menu_mode == "reassigning") {
-        desc = _("Reassigning.\nSelect a mutation to reassign or press SPACE to cancel.");
-    } else if(menu_mode == "activating") {
-        desc = _("<color_green>Activating</color>  <color_yellow>!</color> to examine, <color_yellow>=</color> to reassign.");
-    } else if(menu_mode == "examining") {
-        desc = _("<color_ltblue>Examining</color>  <color_yellow>!</color> to activate, <color_yellow>=</color> to reassign.");
-    }
-    fold_and_print(window, 0, cap_offset, desc_length, c_white, desc);
-    fold_and_print(window, 1, 0, desc_length, c_white, _("Might need to use ? to assign the keys."));
-
-    wrefresh(window);
-}
-
 trait_id Character::trait_by_invlet( const long ch ) const
 {
     for( auto &mut : my_mutations ) {
@@ -565,11 +523,14 @@ trait_id Character::trait_by_invlet( const long ch ) const
             return mut.first;
         }
     }
-    return trait_id::NULL_ID;
+    return trait_id::NULL_ID();
 }
 
 bool player::mutation_ok( const trait_id &mutation, bool force_good, bool force_bad ) const
 {
+    if (mutation_branch::trait_is_blacklisted(mutation)) {
+        return false;
+    }
     if (has_trait(mutation) || has_child_flag(mutation)) {
         // We already have this mutation or something that replaces it.
         return false;
@@ -739,6 +700,13 @@ void player::mutate()
 
 void player::mutate_category( const std::string &cat )
 {
+    // Hacky ID comparison is better than separate hardcoded branch used before
+    // @todo Turn it into the null id
+    if( cat == "MUTCAT_ANY" ) {
+        mutate();
+        return;
+    }
+
     bool force_bad = one_in(3);
     bool force_good = false;
     if (has_trait( trait_ROBUST ) && force_bad) {
@@ -868,7 +836,7 @@ bool player::mutate_towards( const trait_id &mut )
     }
 
     // Check if one of the prereqs that we have TURNS INTO this one
-    trait_id replacing = trait_id::NULL_ID;
+    trait_id replacing = trait_id::NULL_ID();
     prereq = mdata.prereqs; // Reset it
     for( auto &elem : prereq ) {
         if( has_trait( elem ) ) {
@@ -883,7 +851,7 @@ bool player::mutate_towards( const trait_id &mut )
     }
 
     // Loop through again for prereqs2
-    trait_id replacing2 = trait_id::NULL_ID;
+    trait_id replacing2 = trait_id::NULL_ID();
     prereq = mdata.prereqs2; // Reset it
     for( auto &elem : prereq ) {
         if( has_trait( elem ) ) {
@@ -1008,7 +976,7 @@ void player::remove_mutation( const trait_id &mut )
 {
     const auto &mdata = mut.obj();
     // Check if there's a prereq we should shrink back into
-    trait_id replacing = trait_id::NULL_ID;
+    trait_id replacing = trait_id::NULL_ID();
     std::vector<trait_id> originals = mdata.prereqs;
     for (size_t i = 0; !replacing && i < originals.size(); i++) {
         trait_id pre = originals[i];
@@ -1020,7 +988,7 @@ void player::remove_mutation( const trait_id &mut )
         }
     }
 
-    trait_id replacing2 = trait_id::NULL_ID;
+    trait_id replacing2 = trait_id::NULL_ID();
     std::vector<trait_id> originals2 = mdata.prereqs2;
     for (size_t i = 0; !replacing2 && i < originals2.size(); i++) {
         trait_id pre2 = originals2[i];
@@ -1079,7 +1047,7 @@ void player::remove_mutation( const trait_id &mut )
 
     // make sure we don't toggle a mutation or trait twice, or it will cancel itself out.
     if(replacing == replacing2) {
-        replacing2 = trait_id::NULL_ID;
+        replacing2 = trait_id::NULL_ID();
     }
 
     // This should revert back to a removed base trait rather than simply removing the mutation

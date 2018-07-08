@@ -6,10 +6,12 @@
 #include "debug.h"
 #include "enums.h"
 #include "overmapbuffer.h"
+#include "effect.h"
 #include "translations.h"
 #include "messages.h"
 #include "monster.h"
 #include "line.h"
+#include "string_formatter.h"
 #include "mtype.h"
 #include "weather.h"
 #include "npc.h"
@@ -44,8 +46,10 @@ auto start_sfx_timestamp = std::chrono::high_resolution_clock::now();
 auto end_sfx_timestamp = std::chrono::high_resolution_clock::now();
 auto sfx_time = end_sfx_timestamp - start_sfx_timestamp;
 
+const efftype_id effect_alarm_clock( "alarm_clock" );
 const efftype_id effect_deaf( "deaf" );
 const efftype_id effect_sleep( "sleep" );
+const efftype_id effect_slept_through_alarm( "slept_through_alarm" );
 
 static const trait_id trait_HEAVYSLEEPER2( "HEAVYSLEEPER2" );
 static const trait_id trait_HEAVYSLEEPER( "HEAVYSLEEPER" );
@@ -209,8 +213,8 @@ void sounds::process_sounds()
             overmap_buffer.signal_hordes( target, sig_power );
         }
         // Alert all monsters (that can hear) to the sound.
-        for (int i = 0, numz = g->num_zombies(); i < numz; i++) {
-            monster &critter = g->zombie(i);
+        for( monster &critter : g->all_monsters() ) {
+            // @todo Generalize this to Creature::hear_sound
             const int dist = rl_dist( source, critter.pos() );
             if( vol * 2 > dist ) {
                 // Exclude monsters that certainly won't hear the sound
@@ -231,7 +235,8 @@ void sounds::process_sound_markers( player *p )
         const tripoint &pos = sound_event_pair.first;
         const sound_event &sound = sound_event_pair.second;
 
-        const int distance_to_sound = rl_dist( p->pos(), pos );
+        const int distance_to_sound = rl_dist( p->pos().x, p->pos().y, pos.x, pos.y ) +
+            abs( p->pos().z - pos.z ) * 10;
         const int raw_volume = sound.volume;
 
         // The felt volume of a sound is not affected by negative multipliers, such as already
@@ -246,7 +251,7 @@ void sounds::process_sound_markers( player *p )
         if( is_deaf ) {
             if( is_sound_deafening && !p->is_immune_effect( effect_deaf ) ) {
                 p->add_effect( effect_deaf, std::min( 40, ( felt_volume - 130 ) / 8 ) );
-                if( !p->has_trait( trait_id( "DEADENED" ) ) ) {
+                if( !p->has_trait( trait_id( "NOPAIN" ) ) ) {
                     p->add_msg_if_player( m_bad, _( "Your eardrums suddenly ache!" ) );
                     if( p->get_pain() < 10 ) {
                         p->mod_pain( rng( 0, 2 ) );
@@ -269,7 +274,7 @@ void sounds::process_sound_markers( player *p )
         // The heard volume of a sound is the player heard volume, regardless of true volume level.
         const int heard_volume = ( int )( ( raw_volume - weather_vol ) * volume_multiplier ) - distance_to_sound;
 
-        if( heard_volume <= 0 ) {
+        if( heard_volume <= 0 && pos != p->pos() ) {
             continue;
         }
 
@@ -279,6 +284,8 @@ void sounds::process_sound_markers( player *p )
             p->volume = std::max( p->volume, heard_volume );
         }
 
+        // Secure the flag before wake_up() clears the effect
+        bool slept_through = p->has_effect( effect_slept_through_alarm );
         // See if we need to wake someone up
         if( p->has_effect( effect_sleep ) ) {
             if( ( !( p->has_trait( trait_HEAVYSLEEPER ) ||
@@ -300,7 +307,7 @@ void sounds::process_sound_markers( player *p )
                                           ? _( "Heard a noise!" )
                                           : string_format( _( "Heard %s!" ), description.c_str() );
 
-                if( g->cancel_activity_or_ignore_query( query.c_str() ) ) {
+                if( g->cancel_activity_or_ignore_query( query ) ) {
                     p->activity.ignore_trivial = true;
                     for( auto activity : p->backlog ) {
                         activity.ignore_trivial = true;
@@ -316,8 +323,20 @@ void sounds::process_sound_markers( player *p )
             } else {
                 // Else print a direction as well
                 std::string direction = direction_name( direction_from( p->pos(), pos ) );
-                add_msg( m_warning, _( "From the %s you hear %s" ), direction.c_str(), description.c_str() );
+                add_msg( m_warning, _( "From the %1$s you hear %2$s" ), direction.c_str(), description.c_str() );
             }
+        }
+        
+        if( !p->has_effect( effect_sleep ) && p->has_effect( effect_alarm_clock ) && !p->has_bionic( bionic_id( "bio_watch" ) ) ) {
+            if ( p->get_effect( effect_alarm_clock ).get_duration() < 2 ) {
+                if( slept_through ) {
+                    p->add_msg_if_player( _( "Your alarm-clock finally wakes you up." ) );
+                } else {
+                    p->add_msg_if_player( _( "Your alarm-clock wakes you up." ) );
+                }
+                p->add_msg_if_player( _( "You turn off your alarm-clock." ) );
+            }
+            p->get_effect( effect_alarm_clock ).set_duration( 0 );
         }
 
         const std::string &sfx_id = sound.id;
@@ -648,16 +667,14 @@ sfx::sound_thread::sound_thread( const tripoint &source, const tripoint &target,
 {
     // This is function is run in the main thread.
     const int heard_volume = get_heard_volume( source );
-    const player *p;
-    int npc_index = g->npc_at( source );
-    if( npc_index == -1 ) {
+    const player *p = g->critter_at<npc>( source );
+    if( !p ) {
         p = &g->u;
         // sound comes from the same place as the player is, calculation of angle wouldn't work
         ang_src = 0;
         vol_src = heard_volume;
         vol_targ = heard_volume;
     } else {
-        p = g->active_npc[npc_index];
         ang_src = get_heard_angle( source );
         vol_src = std::max(heard_volume - 30, 0);
         vol_targ = std::max(heard_volume - 20, 0);
@@ -895,6 +912,7 @@ void sfx::do_footstep() {
         static std::set<ter_str_id> const dirt = {
             ter_str_id( "t_dirt" ),
             ter_str_id( "t_sand" ),
+            ter_str_id( "t_clay" ),
             ter_str_id( "t_dirtfloor" ),
             ter_str_id( "t_palisade_gate_o" ),
             ter_str_id( "t_sandbox" ),
